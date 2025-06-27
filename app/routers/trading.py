@@ -82,6 +82,13 @@ async def execute_trade(order: TradeOrder):
     if not success:
         raise HTTPException(status_code=400, detail="Trade execution failed")
     
+    # If the order has a decision_id, mark it as executed
+    if hasattr(order, 'decision_id') and order.decision_id:
+        try:
+            await ai_service.mark_decision_executed(order.decision_id)
+        except Exception as e:
+            print(f"Warning: Could not mark decision as executed: {e}")
+    
     return {
         "message": "Trade executed successfully",
         "symbol": order.symbol.upper(),

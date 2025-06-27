@@ -5,12 +5,15 @@ from models import NewsItem, StockInfo, TradeDecision, TradeAction
 from config import settings
 import json
 import logging
+from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class AITradingService:
     def __init__(self):
         self.llm = self._initialize_llm()
+        self.db = SessionLocal()
     
     def _initialize_llm(self):
         """Initialize IBM Watsonx LLM"""
@@ -40,10 +43,72 @@ class AITradingService:
                                 portfolio_context: Dict = None) -> TradeDecision:
         """Analyze stock and news data to make trading decision"""
         
-        if not self.llm:
-            # Fallback decision if LLM is not available
+        try:
+            # Store stock analysis in database
+            stock_analysis = StockAnalysis(
+                symbol=stock_info.symbol,
+                current_price=stock_info.current_price,
+                market_cap=stock_info.market_cap,
+                volume=stock_info.volume,
+                change_percent=stock_info.change_percent
+            )
+            self.db.add(stock_analysis)
+            self.db.flush()  # Get the ID
+            
+            # Store news analysis
+            for news in news_items:
+                sentiment = self._analyze_news_sentiment(news)
+                news_analysis = NewsAnalysis(
+                    symbol=stock_info.symbol,
+                    title=news.title,
+                    description=news.description,
+                    url=news.url,
+                    source=news.source,
+                    sentiment=sentiment,
+                    published_at=datetime.fromisoformat(news.published_at.replace('Z', '+00:00')) if isinstance(news.published_at, str) else news.published_at
+                )
+                self.db.add(news_analysis)
+            
+            # Get AI decision
+            if self.llm:
+                decision = await self._get_ai_decision(stock_info, news_items, portfolio_context)
+            else:
+                decision = self._fallback_decision(stock_info)
+            
+            # Store AI decision in database
+            ai_decision = AIDecision(
+                symbol=stock_info.symbol,
+                action=TradeAction(decision.action),
+                quantity=decision.quantity,
+                confidence=decision.confidence,
+                reasoning=decision.reasoning,
+                suggested_price=decision.suggested_price,
+                stock_price=stock_info.current_price,
+                stock_change_percent=stock_info.change_percent,
+                portfolio_context=json.dumps(portfolio_context) if portfolio_context else None
+            )
+            self.db.add(ai_decision)
+            
+            # Link stock analysis to AI decision
+            stock_analysis.ai_decision_id = ai_decision.id
+            
+            self.db.commit()
+            
+            # Update decision with database ID
+            decision.decision_id = ai_decision.id
+            
+            return decision
+            
+        except Exception as e:
+            logger.error(f"Error in AI analysis: {e}")
+            self.db.rollback()
             return self._fallback_decision(stock_info)
-        
+    
+    async def _get_ai_decision(self, 
+                              stock_info: StockInfo, 
+                              news_items: List[NewsItem],
+                              portfolio_context: Dict = None) -> TradeDecision:
+        """Get AI decision from IBM Granite"""
         try:
             prompt = self._create_analysis_prompt(stock_info, news_items, portfolio_context)
             response = self.llm.invoke(prompt)
@@ -53,8 +118,26 @@ class AITradingService:
             return decision
             
         except Exception as e:
-            logger.error(f"Error in AI analysis: {e}")
+            logger.error(f"Error in AI decision: {e}")
             return self._fallback_decision(stock_info)
+    
+    def _analyze_news_sentiment(self, news: NewsItem) -> SentimentEnum:
+        """Analyze news sentiment"""
+        # Simple keyword-based sentiment analysis
+        text = f"{news.title} {news.description}".lower()
+        
+        positive_words = ['growth', 'profit', 'gain', 'rise', 'up', 'strong', 'positive', 'good', 'bullish', 'buy']
+        negative_words = ['loss', 'decline', 'fall', 'down', 'weak', 'negative', 'bad', 'bearish', 'sell', 'crash']
+        
+        positive_count = sum(1 for word in positive_words if word in text)
+        negative_count = sum(1 for word in negative_words if word in text)
+        
+        if positive_count > negative_count:
+            return SentimentEnum.POSITIVE
+        elif negative_count > positive_count:
+            return SentimentEnum.NEGATIVE
+        else:
+            return SentimentEnum.NEUTRAL
     
     def _create_analysis_prompt(self, 
                                stock_info: StockInfo, 
@@ -176,3 +259,96 @@ Focus on paper trading simulation - prioritize learning and moderate risk-taking
             reasoning=reasoning,
             suggested_price=stock_info.current_price
         )
+    
+    async def get_ai_decisions_history(self, symbol: str = None, limit: int = 50) -> List[Dict]:
+        """Get AI decision history"""
+        try:
+            query = self.db.query(AIDecision)
+            if symbol:
+                query = query.filter(AIDecision.symbol == symbol)
+            
+            decisions = query.order_by(AIDecision.created_at.desc()).limit(limit).all()
+            
+            return [
+                {
+                    "id": decision.id,
+                    "symbol": decision.symbol,
+                    "action": decision.action.value,
+                    "quantity": decision.quantity,
+                    "confidence": decision.confidence,
+                    "reasoning": decision.reasoning,
+                    "suggested_price": decision.suggested_price,
+                    "stock_price": decision.stock_price,
+                    "stock_change_percent": decision.stock_change_percent,
+                    "was_executed": decision.was_executed,
+                    "created_at": decision.created_at.isoformat()
+                }
+                for decision in decisions
+            ]
+        except Exception as e:
+            logger.error(f"Error getting AI decisions: {e}")
+            return []
+    
+    async def get_stock_analysis_history(self, symbol: str, limit: int = 20) -> List[Dict]:
+        """Get stock analysis history"""
+        try:
+            analyses = self.db.query(StockAnalysis).filter(
+                StockAnalysis.symbol == symbol
+            ).order_by(StockAnalysis.analyzed_at.desc()).limit(limit).all()
+            
+            return [
+                {
+                    "symbol": analysis.symbol,
+                    "current_price": analysis.current_price,
+                    "market_cap": analysis.market_cap,
+                    "volume": analysis.volume,
+                    "change_percent": analysis.change_percent,
+                    "analyzed_at": analysis.analyzed_at.isoformat()
+                }
+                for analysis in analyses
+            ]
+        except Exception as e:
+            logger.error(f"Error getting stock analysis: {e}")
+            return []
+    
+    async def get_news_analysis(self, symbol: str = None, limit: int = 20) -> List[Dict]:
+        """Get news analysis with sentiment"""
+        try:
+            query = self.db.query(NewsAnalysis)
+            if symbol:
+                query = query.filter(NewsAnalysis.symbol == symbol)
+            
+            news = query.order_by(NewsAnalysis.analyzed_at.desc()).limit(limit).all()
+            
+            return [
+                {
+                    "symbol": item.symbol,
+                    "title": item.title,
+                    "description": item.description,
+                    "url": item.url,
+                    "source": item.source,
+                    "sentiment": item.sentiment.value if item.sentiment else None,
+                    "published_at": item.published_at.isoformat(),
+                    "analyzed_at": item.analyzed_at.isoformat()
+                }
+                for item in news
+            ]
+        except Exception as e:
+            logger.error(f"Error getting news analysis: {e}")
+            return []
+    
+    async def mark_decision_executed(self, decision_id: int):
+        """Mark an AI decision as executed"""
+        try:
+            decision = self.db.query(AIDecision).filter(AIDecision.id == decision_id).first()
+            if decision:
+                decision.was_executed = True
+                self.db.commit()
+        except Exception as e:
+            logger.error(f"Error marking decision as executed: {e}")
+            self.db.rollback()
+    
+    def __del__(self):
+        """Close database connection"""
+        if hasattr(self, 'db'):
+            self.db.close()

@@ -30,6 +30,7 @@ class TradeDecision(BaseModel):
     confidence: float
     reasoning: str
     suggested_price: float
+    decision_id: Optional[int] = None
 
 class Portfolio(BaseModel):
     cash_balance: float
@@ -43,3 +44,4 @@ class TradeOrder(BaseModel):
     action: TradeAction
     quantity: int
     price: Optional[float] = None
+    decision_id: Optional[int] = None

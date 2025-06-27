@@ -27,6 +27,10 @@ import PortfolioOverview from './PortfolioOverview';
 import StockAnalysis from './StockAnalysis';
 import NewsSection from './NewsSection';
 import TradeHistory from './TradeHistory';
+import AIAnalyticsDashboard from './AIAnalyticsDashboard';
+import NewsAnalysisComponent from './NewsAnalysisComponent';
+import StockAnalysisChart from './StockAnalysisChart';
+import AIInsightsSummary from './AIInsightsSummary';
 
 const TradingDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -100,7 +104,8 @@ const TradingDashboard: React.FC = () => {
         symbol: decision.symbol,
         action: decision.action,
         quantity: decision.quantity,
-        price: decision.suggested_price
+        price: decision.suggested_price,
+        decision_id: decision.decision_id
       });
       
       // Refresh portfolio after trade
@@ -141,6 +146,9 @@ const TradingDashboard: React.FC = () => {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      {/* AI Insights Summary */}
+      <AIInsightsSummary />
 
       {/* Portfolio Summary */}
       {portfolio && (
@@ -238,10 +246,13 @@ const TradingDashboard: React.FC = () => {
 
       {/* Main Dashboard Tabs */}
       <Tabs defaultValue="portfolio" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
           <TabsTrigger value="news">Market News</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
+          <TabsTrigger value="ai-analytics">AI Analytics</TabsTrigger>
+          <TabsTrigger value="news-analysis">News Analysis</TabsTrigger>
+          <TabsTrigger value="stock-charts">Stock Charts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="portfolio" className="space-y-4">
@@ -254,6 +265,18 @@ const TradingDashboard: React.FC = () => {
 
         <TabsContent value="history" className="space-y-4">
           <TradeHistory />
+        </TabsContent>
+
+        <TabsContent value="ai-analytics" className="space-y-4">
+          <AIAnalyticsDashboard />
+        </TabsContent>
+
+        <TabsContent value="news-analysis" className="space-y-4">
+          <NewsAnalysisComponent />
+        </TabsContent>
+
+        <TabsContent value="stock-charts" className="space-y-4">
+          <StockAnalysisChart />
         </TabsContent>
       </Tabs>
     </div>

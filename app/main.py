@@ -28,11 +28,12 @@ app.add_middleware(
 )
 
 # Import routers
-from routers import trading, news, portfolio
+from routers import trading, news, portfolio, analytics
 
 app.include_router(trading.router, prefix="/api/trading", tags=["trading"])
 app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 
 @app.get("/")
 async def root():

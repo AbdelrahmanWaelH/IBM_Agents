@@ -33,6 +33,7 @@ export interface TradeDecision {
   confidence: number;
   reasoning: string;
   suggested_price: number;
+  decision_id?: number;
 }
 
 export interface Portfolio {
@@ -55,6 +56,7 @@ export interface TradeOrder {
   action: 'buy' | 'sell';
   quantity: number;
   price?: number;
+  decision_id?: number;
 }
 
 export interface TradeExecutionResponse {
@@ -96,6 +98,137 @@ export const tradingApi = {
 
   executeTrade: async (order: TradeOrder): Promise<TradeExecutionResponse> => {
     const response = await api.post('/trading/execute', order);
+    return response.data;
+  },
+};
+
+// Analytics interfaces
+export interface AIDecision {
+  id: number;
+  symbol: string;
+  action: string;
+  confidence: number;
+  reasoning: string;
+  suggested_price: number;
+  was_executed: boolean;
+  created_at: string;
+}
+
+export interface NewsAnalysis {
+  symbol: string;
+  title: string;
+  description: string;
+  url: string;
+  source: string;
+  sentiment: string;
+  published_at: string;
+  analyzed_at: string;
+}
+
+export interface StockAnalysis {
+  symbol: string;
+  current_price: number;
+  market_cap: number;
+  volume: number;
+  change_percent: number;
+  analyzed_at: string;
+}
+
+export interface PortfolioPerformance {
+  portfolio_value: number;
+  cash_balance: number;
+  total_trades: number;
+  buy_trades: number;
+  sell_trades: number;
+  win_rate: number;
+  holdings_count: number;
+  holdings: Array<{
+    symbol: string;
+    quantity: number;
+    average_price: number;
+    current_value: number;
+  }>;
+}
+
+export interface SentimentSummary {
+  total_news_items: number;
+  sentiment_distribution: {
+    positive: number;
+    negative: number;
+    neutral: number;
+  };
+  sentiment_percentages: {
+    positive: number;
+    negative: number;
+    neutral: number;
+  };
+  days_analyzed: number;
+  symbol: string;
+}
+
+export interface TradingInsights {
+  total_decisions: number;
+  action_distribution: {
+    buy: number;
+    sell: number;
+    hold: number;
+  };
+  average_confidence: number;
+  execution_rate: number;
+  most_recommended_action: string;
+}
+
+// Analytics API
+export const analyticsApi = {
+  getAIDecisions: async (symbol?: string, limit = 50, days?: number): Promise<AIDecision[]> => {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    params.append('limit', limit.toString());
+    if (days) params.append('days', days.toString());
+    
+    const response = await api.get(`/analytics/ai-decisions?${params}`);
+    return response.data;
+  },
+
+  getNewsAnalysis: async (symbol?: string, limit = 50): Promise<NewsAnalysis[]> => {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    params.append('limit', limit.toString());
+    
+    const response = await api.get(`/analytics/news-analysis?${params}`);
+    return response.data;
+  },
+
+  getStockAnalysis: async (symbol?: string, limit = 50): Promise<StockAnalysis[]> => {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    params.append('limit', limit.toString());
+    
+    const response = await api.get(`/analytics/stock-analysis?${params}`);
+    return response.data;
+  },
+
+  getPortfolioPerformance: async (): Promise<PortfolioPerformance> => {
+    const response = await api.get('/analytics/portfolio-performance');
+    return response.data;
+  },
+
+  getSentimentSummary: async (symbol?: string, days = 7): Promise<SentimentSummary> => {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    params.append('days', days.toString());
+    
+    const response = await api.get(`/analytics/sentiment-summary?${params}`);
+    return response.data;
+  },
+
+  getTradingInsights: async (): Promise<TradingInsights> => {
+    const response = await api.get('/analytics/trading-insights');
+    return response.data;
+  },
+
+  markDecisionExecuted: async (decisionId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/analytics/mark-executed/${decisionId}`);
     return response.data;
   },
 };

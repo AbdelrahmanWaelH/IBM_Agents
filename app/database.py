@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Enum, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Enum, Boolean, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
 import enum
 from config import settings
@@ -18,6 +18,11 @@ class TradeActionEnum(enum.Enum):
     BUY = "buy"
     SELL = "sell"
     HOLD = "hold"
+
+class SentimentEnum(enum.Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEUTRAL = "neutral"
 
 class Portfolio(Base):
     __tablename__ = "portfolios"
@@ -49,6 +54,7 @@ class Trade(Base):
     quantity = Column(Integer)
     price = Column(Float)
     total_value = Column(Float)
+    ai_decision_id = Column(Integer, ForeignKey('ai_decisions.id'), nullable=True)
     executed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class StockPrice(Base):
@@ -62,9 +68,51 @@ class StockPrice(Base):
     change_percent = Column(Float, nullable=True)
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
 
-def create_tables():
-    """Create all database tables"""
-    Base.metadata.create_all(bind=engine)
+class AIDecision(Base):
+    __tablename__ = "ai_decisions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    action = Column(Enum(TradeActionEnum))
+    quantity = Column(Integer)
+    confidence = Column(Float)
+    reasoning = Column(Text)
+    suggested_price = Column(Float)
+    stock_price = Column(Float)
+    stock_change_percent = Column(Float, nullable=True)
+    portfolio_context = Column(Text, nullable=True)  # JSON string
+    was_executed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    trades = relationship("Trade", backref="ai_decision")
+
+class NewsAnalysis(Base):
+    __tablename__ = "news_analysis"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True, nullable=True)
+    title = Column(String)
+    description = Column(Text, nullable=True)
+    url = Column(String)
+    source = Column(String)
+    sentiment = Column(Enum(SentimentEnum), nullable=True)
+    ai_decision_id = Column(Integer, ForeignKey('ai_decisions.id'), nullable=True)
+    published_at = Column(DateTime(timezone=True))
+    analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class StockAnalysis(Base):
+    __tablename__ = "stock_analysis"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    current_price = Column(Float)
+    market_cap = Column(Float, nullable=True)
+    volume = Column(Integer, nullable=True)
+    change_percent = Column(Float, nullable=True)
+    technical_indicators = Column(Text, nullable=True)  # JSON string
+    ai_decision_id = Column(Integer, ForeignKey('ai_decisions.id'))
+    analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 def create_tables():
     """Create all database tables"""
