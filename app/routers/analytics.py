@@ -148,7 +148,7 @@ async def get_trading_insights():
         raise HTTPException(status_code=503, detail="Analytics service unavailable")
     
     try:
-        decisions = await ai_service.get_decision_history(limit=100)
+        decisions = await ai_service.get_ai_decisions_history(limit=100)
         
         # Analyze decision patterns
         action_counts = {"buy": 0, "sell": 0, "hold": 0}

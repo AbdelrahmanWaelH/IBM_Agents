@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
@@ -7,7 +7,32 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 second timeout
 });
+
+// Add response interceptor for better error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.code === 'ECONNABORTED') {
+      throw new Error('Request timeout - please try again');
+    }
+    
+    if (error.response?.status === 404) {
+      throw new Error('Market data not available for this symbol');
+    }
+    
+    if (error.response?.status === 429) {
+      throw new Error('Rate limit exceeded - please wait before trying again');
+    }
+    
+    if (error.response?.data && typeof error.response.data === 'object' && 'detail' in error.response.data) {
+      throw new Error(error.response.data.detail as string);
+    }
+    
+    throw new Error(error.message || 'An unexpected error occurred');
+  }
+);
 
 export interface StockInfo {
   symbol: string;
@@ -82,23 +107,46 @@ export interface ResetResponse {
 // Trading API
 export const tradingApi = {
   getStock: async (symbol: string): Promise<StockInfo> => {
-    const response = await api.get(`/trading/stocks/${symbol}`);
-    return response.data;
+    try {
+      const response = await api.get(`/trading/stocks/${symbol}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching stock data for ${symbol}:`, error);
+      throw error;
+    }
   },
 
   getMultipleStocks: async (symbols: string[]): Promise<StockInfo[]> => {
-    const response = await api.get(`/trading/stocks?symbols=${symbols.join(',')}`);
-    return response.data;
+    try {
+      if (!symbols || symbols.length === 0) {
+        return [];
+      }
+      const response = await api.get(`/trading/stocks?symbols=${symbols.join(',')}`);
+      return response.data || [];
+    } catch (error) {
+      console.error(`Error fetching multiple stocks:`, error);
+      throw error;
+    }
   },
 
   analyzeStock: async (symbol: string): Promise<TradeDecision> => {
-    const response = await api.post(`/trading/analyze/${symbol}`);
-    return response.data;
+    try {
+      const response = await api.post(`/trading/analyze/${symbol}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error analyzing stock ${symbol}:`, error);
+      throw error;
+    }
   },
 
   executeTrade: async (order: TradeOrder): Promise<TradeExecutionResponse> => {
-    const response = await api.post('/trading/execute', order);
-    return response.data;
+    try {
+      const response = await api.post('/trading/execute', order);
+      return response.data;
+    } catch (error) {
+      console.error(`Error executing trade:`, error);
+      throw error;
+    }
   },
 };
 
@@ -267,4 +315,130 @@ export const portfolioApi = {
     const response = await api.post('/portfolio/reset');
     return response.data;
   },
+};
+
+// Automated Trading API
+export const automatedTradingApi = {
+  getStatus: async () => {
+    try {
+      const response = await api.get('/automated-trading/status');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching engine status:', error);
+      throw error;
+    }
+  },
+
+  start: async () => {
+    try {
+      const response = await api.post('/automated-trading/start');
+      return response.data;
+    } catch (error) {
+      console.error('Error starting engine:', error);
+      throw error;
+    }
+  },
+
+  stop: async () => {
+    try {
+      const response = await api.post('/automated-trading/stop');
+      return response.data;
+    } catch (error) {
+      console.error('Error stopping engine:', error);
+      throw error;
+    }
+  },
+
+  setMode: async (mode: 'analysis_only' | 'full_control') => {
+    try {
+      const response = await api.post(`/automated-trading/mode/${mode}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error setting mode to ${mode}:`, error);
+      throw error;
+    }
+  },
+
+  getMode: async () => {
+    try {
+      const response = await api.get('/automated-trading/mode');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching trading mode:', error);
+      throw error;
+    }
+  },
+
+  updateConfidenceThreshold: async (threshold: number) => {
+    try {
+      const response = await api.put('/automated-trading/confidence-threshold', null, {
+        params: { threshold }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating confidence threshold:', error);
+      throw error;
+    }
+  },
+
+  getRecentActivity: async () => {
+    try {
+      const response = await api.get('/automated-trading/recent-activity');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching recent activity:', error);
+      throw error;
+    }
+  },
+
+  executeManualAnalysis: async (symbol: string) => {
+    try {
+      const response = await api.post(`/automated-trading/execute-manual-analysis?symbol=${symbol}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error executing manual analysis for ${symbol}:`, error);
+      throw error;
+    }
+  },
+
+  // Symbol management
+  getSymbols: async () => {
+    try {
+      const response = await api.get('/automated-trading/symbols');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching symbols:', error);
+      throw error;
+    }
+  },
+
+  updateSymbols: async (symbols: string[]) => {
+    try {
+      const response = await api.put('/automated-trading/symbols', symbols);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating symbols:', error);
+      throw error;
+    }
+  },
+
+  addSymbol: async (symbol: string) => {
+    try {
+      const response = await api.post(`/automated-trading/symbols/add?symbol=${symbol}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error adding symbol ${symbol}:`, error);
+      throw error;
+    }
+  },
+
+  removeSymbol: async (symbol: string) => {
+    try {
+      const response = await api.delete(`/automated-trading/symbols/${symbol}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error removing symbol ${symbol}:`, error);
+      throw error;
+    }
+  }
 };

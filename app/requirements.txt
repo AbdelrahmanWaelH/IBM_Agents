@@ -7,11 +7,10 @@ langchain==0.2.16
 langchain-community==0.2.16
 langchain-ibm==0.1.9
 pydantic==2.10.4
-yfinance==0.2.50
+yfinance==0.2.63
+curl_cffi==0.11.4
 python-multipart==0.0.19
 httpx==0.28.1
 psycopg2-binary==2.9.9
 alembic==1.13.1
 sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-alembic==1.13.1

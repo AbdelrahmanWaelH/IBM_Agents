@@ -31,6 +31,7 @@ import AIAnalyticsDashboard from './AIAnalyticsDashboard';
 import NewsAnalysisComponent from './NewsAnalysisComponent';
 import StockAnalysisChart from './StockAnalysisChart';
 import AIInsightsSummary from './AIInsightsSummary';
+import EnhancedTradingControl from './EnhancedTradingControl';
 
 const TradingDashboard: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -246,13 +247,14 @@ const TradingDashboard: React.FC = () => {
 
       {/* Main Dashboard Tabs */}
       <Tabs defaultValue="portfolio" className="w-full">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
           <TabsTrigger value="news">Market News</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
           <TabsTrigger value="ai-analytics">AI Analytics</TabsTrigger>
           <TabsTrigger value="news-analysis">News Analysis</TabsTrigger>
           <TabsTrigger value="stock-charts">Stock Charts</TabsTrigger>
+          <TabsTrigger value="automated-trading">Auto Trading</TabsTrigger>
         </TabsList>
 
         <TabsContent value="portfolio" className="space-y-4">
@@ -277,6 +279,10 @@ const TradingDashboard: React.FC = () => {
 
         <TabsContent value="stock-charts" className="space-y-4">
           <StockAnalysisChart />
+        </TabsContent>
+
+        <TabsContent value="automated-trading" className="space-y-4">
+          <EnhancedTradingControl />
         </TabsContent>
       </Tabs>
     </div>

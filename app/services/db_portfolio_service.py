@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from models import Portfolio as PortfolioModel, TradeAction
-from database import get_db, Portfolio, Holding, Trade, StockPrice, SessionLocal
+from database import get_db, Portfolio, Holding, Trade, StockPrice, SessionLocal, TradeActionEnum
 from config import settings
 import logging
 from datetime import datetime
@@ -135,7 +135,7 @@ class DatabasePortfolioService:
         trade = Trade(
             portfolio_id=1,
             symbol=symbol,
-            action=TradeAction.BUY,
+            action=TradeActionEnum.BUY,
             quantity=quantity,
             price=price,
             total_value=total_cost
@@ -180,7 +180,7 @@ class DatabasePortfolioService:
         trade = Trade(
             portfolio_id=1,
             symbol=symbol,
-            action=TradeAction.SELL,
+            action=TradeActionEnum.SELL,
             quantity=quantity,
             price=price,
             total_value=proceeds

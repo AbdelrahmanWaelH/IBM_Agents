@@ -5,7 +5,7 @@ from models import NewsItem, StockInfo, TradeDecision, TradeAction
 from config import settings
 import json
 import logging
-from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum
+from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum, TradeActionEnum
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,15 @@ class AITradingService:
                                 portfolio_context: Dict = None) -> TradeDecision:
         """Analyze stock and news data to make trading decision"""
         
+        # Validate input data
+        if not stock_info:
+            logger.error("Cannot analyze - no stock information provided")
+            raise ValueError("Stock information is required for analysis")
+        
+        if not stock_info.current_price or stock_info.current_price <= 0:
+            logger.error(f"Invalid stock price for {stock_info.symbol}: {stock_info.current_price}")
+            raise ValueError(f"Invalid stock price data for {stock_info.symbol}")
+        
         try:
             # Store stock analysis in database
             stock_analysis = StockAnalysis(
@@ -76,9 +85,16 @@ class AITradingService:
                 decision = self._fallback_decision(stock_info)
             
             # Store AI decision in database
+            # Map TradeAction to TradeActionEnum
+            action_mapping = {
+                TradeAction.BUY: TradeActionEnum.BUY,
+                TradeAction.SELL: TradeActionEnum.SELL,
+                TradeAction.HOLD: TradeActionEnum.HOLD
+            }
+            
             ai_decision = AIDecision(
                 symbol=stock_info.symbol,
-                action=TradeAction(decision.action),
+                action=action_mapping.get(decision.action, TradeActionEnum.HOLD),
                 quantity=decision.quantity,
                 confidence=decision.confidence,
                 reasoning=decision.reasoning,
