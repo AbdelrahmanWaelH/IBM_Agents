@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn==0.32.1
+python-dotenv==1.0.0
+requests==2.32.3
+langchain-core==0.2.38
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-ibm==0.1.9
+pydantic==2.10.4
+yfinance==0.2.50
+python-multipart==0.0.19
+httpx==0.28.1
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.13.1
