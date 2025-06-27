@@ -15,10 +15,14 @@ class AITradingService:
     def _initialize_llm(self):
         """Initialize IBM Watsonx LLM"""
         try:
+            # Extract just the numeric project ID
+            project_id = settings.IBM_PROJECT_ID.split(' - ')[0].strip()
+            
             return WatsonxLLM(
                 model_id=settings.IBM_BASE_MODEL,
                 url=settings.IBM_BASE_URL,
                 apikey=settings.IBM_API_KEY,
+                project_id=project_id,
                 params={
                     "temperature": 0.3,
                     "max_new_tokens": 512,
@@ -150,12 +154,14 @@ Focus on paper trading simulation - prioritize learning and moderate risk-taking
         return self._fallback_decision(stock_info)
     
     def _fallback_decision(self, stock_info: StockInfo) -> TradeDecision:
-        """Fallback decision when AI is not available"""
-        # Simple rule-based decision
-        if stock_info.change_percent and stock_info.change_percent > 2:
+        """Simple fallback decision when AI is not available"""
+        # Simple rule-based decision as backup
+        change_percent = stock_info.change_percent or 0
+        
+        if change_percent > 2:
             action = TradeAction.BUY
             reasoning = "Stock showing strong positive momentum (>2% gain)"
-        elif stock_info.change_percent and stock_info.change_percent < -3:
+        elif change_percent < -3:
             action = TradeAction.SELL
             reasoning = "Stock showing significant decline (>3% loss)"
         else:

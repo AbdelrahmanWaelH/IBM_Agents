@@ -6,6 +6,7 @@ load_dotenv()
 class Settings:
     IBM_API_KEY = os.getenv("IBM_API_KEY")
     IBM_BASE_MODEL = os.getenv("IBM_BASE_MODEL", "granite-13b-instruct-v2")
+    IBM_PROJECT_ID = os.getenv("IBM_PROJECT_ID", "demo-project-123")
     INITIAL_BUDGET = float(os.getenv("INITIAL_BUDGET", 1000000))
     NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
     IBM_BASE_URL = "https://us-south.ml.cloud.ibm.com"

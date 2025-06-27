@@ -7,8 +7,14 @@ import os
 load_dotenv()
 
 # Initialize database
-from database import create_tables
-create_tables()
+try:
+    from database import create_tables, init_portfolio
+    create_tables()
+    init_portfolio()
+    print("✅ Database initialized successfully")
+except Exception as e:
+    print(f"⚠️  Database initialization failed: {e}")
+    print("Continuing with file-based storage...")
 
 app = FastAPI(title="AI Trading Agent", version="1.0.0")
 

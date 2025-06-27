@@ -4,14 +4,23 @@ from models import StockInfo, TradeDecision, TradeOrder
 from services.stock_service import StockService
 from services.news_service import NewsService
 from services.ai_service import AITradingService
-from services.db_portfolio_service import DatabasePortfolioService
+
+# Try to import database service, fall back to file-based service
+try:
+    from services.db_portfolio_service import DatabasePortfolioService
+    portfolio_service = DatabasePortfolioService()
+    print("✅ Using PostgreSQL database for portfolio storage")
+except Exception as e:
+    print(f"⚠️  Database service unavailable: {e}")
+    from services.portfolio_service import PortfolioService
+    portfolio_service = PortfolioService()
+    print("✅ Using file-based storage for portfolio")
 
 router = APIRouter()
 
 stock_service = StockService()
 news_service = NewsService()
 ai_service = AITradingService()
-portfolio_service = DatabasePortfolioService()
 
 @router.get("/stocks/{symbol}", response_model=StockInfo)
 async def get_stock_info(symbol: str):
