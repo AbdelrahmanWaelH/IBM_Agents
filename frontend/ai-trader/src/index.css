@@ -41,8 +41,14 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+
 :root {
-  --radius: 0.625rem;
+  
+  --shwarzwald: #092327;
+  --foggreen: #0B5351;
+  --facemask: #00a9a5;
+  --faintblue: #90C2E7;
+  --radius: 1.75rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
