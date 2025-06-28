@@ -50,6 +50,8 @@ IMPORTANT INSTRUCTIONS:
 - Do not continue conversations or role-play multiple turns
 - Give ONE response to the user's question/statement
 - When you have gathered all 7 pieces of information, respond with "ONBOARDING_COMPLETE" at the end
+- When given a message from the user that is not within the scope of investing or their preferences, you should ask them politely to stay on topic. You can say "We are here to discuss investments, please remain on topic". 
+
 
 If this is the first interaction, start by greeting the user and asking about their investment experience level.
 """
