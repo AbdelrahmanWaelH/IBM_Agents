@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import SymbolManager from './SymbolManager';
-import { automatedTradingApi } from '../services/api';
+import { automatedTradingApi, portfolioApi, type Portfolio } from '../services/api';
 import { 
   Bot, 
   Play, 
@@ -68,6 +68,7 @@ const EnhancedTradingControl: React.FC = () => {
   const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null);
   const [modeInfo, setModeInfo] = useState<TradingModeInfo | null>(null);
   const [recentActivity, setRecentActivity] = useState<RecentActivity | null>(null);
+  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -104,17 +105,27 @@ const EnhancedTradingControl: React.FC = () => {
     }
   }, []);
 
+  const loadPortfolio = useCallback(async () => {
+    try {
+      const data = await portfolioApi.getPortfolio();
+      setPortfolio(data);
+    } catch (error) {
+      console.error('Error loading portfolio:', error);
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     try {
       await Promise.all([
         loadEngineStatus(),
         loadModeInfo(),
-        loadRecentActivity()
+        loadRecentActivity(),
+        loadPortfolio()
       ]);
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  }, [loadEngineStatus, loadModeInfo, loadRecentActivity]);
+  }, [loadEngineStatus, loadModeInfo, loadRecentActivity, loadPortfolio]);
 
   useEffect(() => {
     loadAllData();
@@ -258,9 +269,10 @@ const EnhancedTradingControl: React.FC = () => {
 
       {/* Main Tabs */}
       <Tabs defaultValue="control" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="control">Engine Control</TabsTrigger>
           <TabsTrigger value="mode">Trading Mode</TabsTrigger>
+          <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
           <TabsTrigger value="symbols">Symbols</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
@@ -509,6 +521,96 @@ const EnhancedTradingControl: React.FC = () => {
                   </Button>
                 </CardContent>
               </Card>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="portfolio" className="space-y-6">
+          {/* Portfolio Overview */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                Current Portfolio Status
+              </CardTitle>
+              <CardDescription>
+                Holdings being monitored by the AI trading engine
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {portfolio ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600">Total Value</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        ${portfolio.total_value?.toLocaleString() || '0'}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600">Available Cash</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        ${portfolio.cash_balance?.toLocaleString() || '0'}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600">Total P&L</div>
+                      <div className={`text-2xl font-bold ${
+                        (portfolio.profit_loss || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {(portfolio.profit_loss || 0) >= 0 ? '+' : ''}
+                        ${(portfolio.profit_loss || 0).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {portfolio.holdings && portfolio.holdings.length > 0 ? (
+                    <div className="space-y-3">
+                      <h3 className="font-semibold">Current Holdings</h3>
+                      {portfolio.holdings.map((holding, index: number) => (
+                        <div key={index} className="border rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Badge variant="outline" className="font-mono">
+                                {holding.symbol}
+                              </Badge>
+                              <div>
+                                <div className="font-medium">{holding.quantity} shares</div>
+                                <div className="text-sm text-gray-600">
+                                  Avg. ${holding.avg_price?.toFixed(2)}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-semibold">
+                                ${(holding.quantity * (holding.current_price || holding.avg_price)).toLocaleString()}
+                              </div>
+                              <div className={`text-sm ${
+                                (holding.current_price || 0) >= (holding.avg_price || 0) 
+                                  ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {(holding.current_price || 0) >= (holding.avg_price || 0) ? '+' : ''}
+                                {(((holding.current_price || holding.avg_price) - holding.avg_price) / holding.avg_price * 100).toFixed(2)}%
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <BarChart3 className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                      <p>No current holdings</p>
+                      <p className="text-sm mt-2">The AI will make recommendations based on market analysis</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <RefreshCw className="h-6 w-6 animate-spin mx-auto text-gray-400" />
+                  <p className="text-gray-500 mt-2">Loading portfolio data...</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

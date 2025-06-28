@@ -29,7 +29,7 @@ import NewsSection from './NewsSection';
 import TradeHistory from './TradeHistory';
 import AIAnalyticsDashboard from './AIAnalyticsDashboard';
 import NewsAnalysisComponent from './NewsAnalysisComponent';
-import StockAnalysisChart from './StockAnalysisChart';
+import RealTimeStockChart from './RealTimeStockChart';
 import AIInsightsSummary from './AIInsightsSummary';
 import EnhancedTradingControl from './EnhancedTradingControl';
 
@@ -278,7 +278,7 @@ const TradingDashboard: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="stock-charts" className="space-y-4">
-          <StockAnalysisChart />
+          <RealTimeStockChart />
         </TabsContent>
 
         <TabsContent value="automated-trading" className="space-y-4">

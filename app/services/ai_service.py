@@ -200,13 +200,14 @@ INSTRUCTIONS:
 6. Provide confidence level (0.0 to 1.0)
 7. Give clear reasoning for your decision
 
-Respond in the following JSON format:
+IMPORTANT: Respond ONLY with valid JSON. Do not include any text before or after the JSON.
+
+JSON format (required):
 {{
-    "action": "BUY|SELL|HOLD",
+    "action": "BUY",
     "confidence": 0.75,
     "quantity_percentage": 10,
-    "reasoning": "Brief explanation of the decision",
-    "key_factors": ["factor1", "factor2", "factor3"]
+    "reasoning": "Brief explanation of the decision"
 }}
 
 Focus on paper trading simulation - prioritize learning and moderate risk-taking over extreme conservatism.
@@ -215,6 +216,8 @@ Focus on paper trading simulation - prioritize learning and moderate risk-taking
     
     def _parse_llm_response(self, response: str, stock_info: StockInfo) -> TradeDecision:
         """Parse LLM response into TradeDecision object"""
+        logger.info(f"Parsing LLM response: {response[:200]}...")
+        
         try:
             # Try to extract JSON from response
             start_idx = response.find('{')
@@ -222,7 +225,27 @@ Focus on paper trading simulation - prioritize learning and moderate risk-taking
             
             if start_idx != -1 and end_idx != -1:
                 json_str = response[start_idx:end_idx]
-                data = json.loads(json_str)
+                
+                # Clean up the JSON string
+                json_str = json_str.strip()
+                
+                # Try to fix common JSON issues
+                try:
+                    data = json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Initial JSON parse failed: {e}")
+                    
+                    # Try to fix trailing commas and other issues
+                    import re
+                    json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas before }
+                    json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas before ]
+                    
+                    try:
+                        data = json.loads(json_str)
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"JSON parse failed after cleanup: {e2}")
+                        logger.error(f"Problematic JSON: {json_str}")
+                        raise ValueError(f"Failed to parse AI response as JSON: {e2}")
                 
                 action = TradeAction(data.get('action', 'hold').lower())
                 confidence = float(data.get('confidence', 0.5))

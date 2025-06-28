@@ -15,71 +15,87 @@ class NewsService:
     async def get_financial_news(self, query: str = "stock market", limit: int = 10) -> List[NewsItem]:
         """Get financial news from NewsAPI"""
         if not self.api_key:
-            # Fallback to mock data if no API key
-            return self._get_mock_news()
+            logger.error("NewsAPI key not configured")
+            raise ValueError("NewsAPI key not configured. Please set NEWS_API_KEY in environment.")
         
         try:
             url = f"{self.base_url}/everything"
+            
+            # More flexible query for stock symbols
+            if query.upper() in ['AMZN', 'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'META']:
+                # For major stocks, use company names too
+                company_names = {
+                    'AMZN': 'Amazon',
+                    'AAPL': 'Apple',
+                    'GOOGL': 'Google OR Alphabet',
+                    'MSFT': 'Microsoft',
+                    'TSLA': 'Tesla',
+                    'NVDA': 'Nvidia',
+                    'META': 'Meta OR Facebook'
+                }
+                search_query = f"({query} OR {company_names.get(query.upper(), query)}) AND (stock OR earnings OR financial OR market)"
+            else:
+                search_query = f"{query} AND (stock OR trading OR finance OR market)"
+            
             params = {
-                'q': query,
+                'q': search_query,
                 'language': 'en',
                 'sortBy': 'publishedAt',
                 'pageSize': limit,
                 'apiKey': self.api_key,
-                'from': (datetime.now() - timedelta(days=1)).isoformat()
+                'from': (datetime.now() - timedelta(days=2)).isoformat(),  # Extended to 2 days
+                'domains': 'cnbc.com,bloomberg.com,reuters.com,marketwatch.com,yahoo.com,forbes.com,finance.yahoo.com,investing.com'
             }
             
-            response = requests.get(url, params=params)
+            logger.info(f"Searching news with query: {search_query}")
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
             articles = data.get('articles', [])
             
+            logger.info(f"NewsAPI returned {len(articles)} articles for query: {query}")
+            
+            if not articles:
+                logger.warning(f"No news articles found for query: {query}")
+                # Try a fallback with a simpler query
+                fallback_params = params.copy()
+                fallback_params['q'] = query  # Just the symbol/query without additional filters
+                logger.info(f"Trying fallback query: {query}")
+                
+                fallback_response = requests.get(url, params=fallback_params, timeout=10)
+                fallback_response.raise_for_status()
+                fallback_data = fallback_response.json()
+                articles = fallback_data.get('articles', [])
+                
+                logger.info(f"Fallback query returned {len(articles)} articles")
+                
+                if not articles:
+                    return []
+            
             news_items = []
             for article in articles:
-                news_items.append(NewsItem(
-                    title=article['title'],
-                    description=article['description'] or '',
-                    url=article['url'],
-                    published_at=datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00')),
-                    source=article['source']['name']
-                ))
+                if article.get('title') and article.get('url'):
+                    try:
+                        published_at = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
+                        news_items.append(NewsItem(
+                            title=article['title'][:200],  # Limit title length
+                            description=(article.get('description') or '')[:500],  # Limit description
+                            url=article['url'],
+                            published_at=published_at,
+                            source=article['source']['name']
+                        ))
+                    except Exception as e:
+                        logger.warning(f"Error parsing article: {e}")
+                        continue
             
+            logger.info(f"Successfully fetched {len(news_items)} news articles for: {query}")
             return news_items
         
         except Exception as e:
             logger.error(f"Error fetching news: {e}")
-            return self._get_mock_news()
+            raise ValueError(f"Failed to fetch news from NewsAPI: {e}")
     
     async def get_stock_news(self, symbol: str, limit: int = 5) -> List[NewsItem]:
         """Get news specific to a stock symbol"""
         return await self.get_financial_news(f"{symbol} stock", limit)
-    
-    def _get_mock_news(self) -> List[NewsItem]:
-        """Mock news data for testing"""
-        return [
-            NewsItem(
-                title="Market Shows Strong Performance in Tech Sector",
-                description="Technology stocks continue to lead market gains as investors show confidence in AI and cloud computing sectors.",
-                url="https://example.com/news/1",
-                published_at=datetime.now() - timedelta(hours=2),
-                source="Financial Times",
-                sentiment="positive"
-            ),
-            NewsItem(
-                title="Federal Reserve Maintains Interest Rates",
-                description="The Federal Reserve decided to keep interest rates unchanged, citing stable economic conditions.",
-                url="https://example.com/news/2",
-                published_at=datetime.now() - timedelta(hours=4),
-                source="Reuters",
-                sentiment="neutral"
-            ),
-            NewsItem(
-                title="Energy Sector Faces Volatility",
-                description="Oil prices fluctuate as geopolitical tensions create uncertainty in energy markets.",
-                url="https://example.com/news/3",
-                published_at=datetime.now() - timedelta(hours=6),
-                source="Bloomberg",
-                sentiment="negative"
-            )
-        ]

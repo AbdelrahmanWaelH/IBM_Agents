@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { tradingApi } from '../services/api';
 import { 
   Plus, 
   Settings, 
@@ -58,15 +59,40 @@ const SymbolManager: React.FC = () => {
     }
   };
 
+  const validateSymbol = async (symbol: string): Promise<boolean> => {
+    try {
+      await tradingApi.getStock(symbol.toUpperCase());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const addSymbol = async () => {
     if (!newSymbol.trim()) return;
+    
+    const symbolToAdd = newSymbol.trim().toUpperCase();
+    
+    // Check if symbol already exists
+    if (symbols.includes(symbolToAdd)) {
+      setError(`Symbol ${symbolToAdd} is already in the list`);
+      return;
+    }
     
     setLoading(true);
     setError(null);
     setSuccess(null);
     
     try {
-      const response = await fetch(`/api/automated-trading/symbols/add?symbol=${encodeURIComponent(newSymbol.trim().toUpperCase())}`, {
+      // Validate symbol first
+      const isValid = await validateSymbol(symbolToAdd);
+      if (!isValid) {
+        setError(`Invalid symbol: ${symbolToAdd}. Please check the symbol and try again.`);
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`/api/automated-trading/symbols/add?symbol=${encodeURIComponent(symbolToAdd)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -77,7 +103,7 @@ const SymbolManager: React.FC = () => {
         const data: SymbolData = await response.json();
         setSymbols(data.symbols);
         setNewSymbol('');
-        setSuccess(`Symbol ${newSymbol.toUpperCase()} added successfully`);
+        setSuccess(`Symbol ${symbolToAdd} added successfully`);
       } else {
         const errorData = await response.json();
         setError(errorData.detail || 'Failed to add symbol');
