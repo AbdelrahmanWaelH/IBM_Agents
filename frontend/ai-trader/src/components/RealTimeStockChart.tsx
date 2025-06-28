@@ -27,7 +27,7 @@ interface PriceData {
 }
 
 const RealTimeStockChart: React.FC = () => {
-  const [symbol, setSymbol] = useState('AAPL');
+  const [symbol, setSymbol] = useState('');
   const [stockInfo, setStockInfo] = useState<StockInfo | null>(null);
   const [chartData, setChartData] = useState<ChartData[]>([]);
   const [priceData, setPriceData] = useState<PriceData[]>([]);
@@ -35,96 +35,139 @@ const RealTimeStockChart: React.FC = () => {
   const [isRealTime, setIsRealTime] = useState(false);
   const [interval, setInterval] = useState('1m');
   const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   
   const intervalRef = useRef<number | null>(null);
   const lastUpdateRef = useRef<number>(0);
 
+  const generateChartData = (basePrice: number, interval: string, points: number) => {
+    const now = Date.now();
+    const data: ChartData[] = [];
+    const prices: PriceData[] = [];
+    
+    // Calculate time intervals based on timeframe
+    const timeIntervals = {
+      '1m': 60 * 1000,
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000,
+      '1w': 7 * 24 * 60 * 60 * 1000
+    };
+    
+    const intervalMs = timeIntervals[interval as keyof typeof timeIntervals] || 60 * 1000;
+    
+    // Use a more stable price generation with trending
+    let currentPrice = basePrice;
+    const trend = (Math.random() - 0.5) * 0.001; // Small overall trend
+    
+    for (let i = points - 1; i >= 0; i--) {
+      const timestamp = now - (i * intervalMs);
+      
+      // Apply trend and small random variation
+      const trendChange = trend * (points - i);
+      const randomVariation = (Math.random() - 0.5) * 0.005 * basePrice; // ±0.5% variation
+      currentPrice = basePrice + trendChange + randomVariation;
+      
+      // Generate OHLC data with more realistic patterns
+      const volatility = 0.002 * currentPrice; // 0.2% volatility
+      const open = currentPrice + (Math.random() - 0.5) * volatility;
+      const close = currentPrice + (Math.random() - 0.5) * volatility;
+      const high = Math.max(open, close) + Math.random() * volatility;
+      const low = Math.min(open, close) - Math.random() * volatility;
+      
+      data.push({
+        x: timestamp,
+        y: [open, high, low, close]
+      });
+      
+      prices.push({
+        timestamp,
+        price: close,
+        volume: Math.floor(Math.random() * 500000 + 500000) // 500K to 1M volume
+      });
+    }
+    
+    return { data, prices };
+  };
+
   const loadStockData = useCallback(async () => {
+    if (!symbol.trim()) {
+      setError('Please enter a stock symbol');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     
     try {
-      const data = await tradingApi.getStock(symbol);
+      const data = await tradingApi.getStock(symbol.toUpperCase());
       setStockInfo(data);
       
-      // Generate initial chart data (mock historical data for demo)
-      const now = Date.now();
-      const initialData: ChartData[] = [];
-      const initialPrices: PriceData[] = [];
+      // Generate chart data based on interval
+      const points = interval === '1w' ? 52 : interval === '1d' ? 30 : 50;
+      const { data: chartData, prices } = generateChartData(data.current_price, interval, points);
       
-      for (let i = 29; i >= 0; i--) {
-        const timestamp = now - (i * 60 * 1000); // 1 minute intervals
-        const basePrice = data.current_price;
-        const variation = (Math.random() - 0.5) * 0.02 * basePrice; // ±2% variation
-        const price = basePrice + variation;
-        const open = price + (Math.random() - 0.5) * 0.01 * price;
-        const high = Math.max(open, price) + Math.random() * 0.005 * price;
-        const low = Math.min(open, price) - Math.random() * 0.005 * price;
-        
-        initialData.push({
-          x: timestamp,
-          y: [open, high, low, price]
-        });
-        
-        initialPrices.push({
-          timestamp,
-          price,
-          volume: Math.floor(Math.random() * 1000000)
-        });
-      }
-      
-      setChartData(initialData);
-      setPriceData(initialPrices);
-      lastUpdateRef.current = now;
+      setChartData(chartData);
+      setPriceData(prices);
+      setHasLoaded(true);
+      lastUpdateRef.current = Date.now();
       
     } catch (err) {
-      setError('Failed to load stock data');
+      setError(`Failed to load data for ${symbol.toUpperCase()}`);
       console.error('Error loading stock data:', err);
     } finally {
       setLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, interval]);
 
   const updateRealTimeData = useCallback(async () => {
-    if (!stockInfo) return;
+    if (!stockInfo || !isRealTime) return;
+    
+    const now = Date.now();
+    
+    // Only update if enough time has passed (based on interval)
+    const minInterval = interval === '1m' ? 30000 : interval === '5m' ? 60000 : 180000; // Slower updates
+    if (now - lastUpdateRef.current < minInterval) return;
     
     try {
-      const data = await tradingApi.getStock(symbol);
-      const now = Date.now();
+      // Don't make API call for real-time updates, just simulate price movement
+      // const data = await tradingApi.getStock(symbol);
       
-      // Only update if enough time has passed (based on interval)
-      const minInterval = interval === '1m' ? 60000 : interval === '5m' ? 300000 : 3600000;
-      if (now - lastUpdateRef.current < minInterval) return;
+      // Add new data point with more stable price movement
+      const lastPrice = priceData[priceData.length - 1]?.price || stockInfo.current_price;
       
-      setStockInfo(data);
+      // More gradual price changes for real-time updates
+      const maxChange = 0.002; // Max 0.2% change per update
+      const priceChange = (Math.random() - 0.5) * maxChange * lastPrice;
+      const newPrice = Math.max(0.01, lastPrice + priceChange); // Ensure positive price
       
-      // Add new data point
-      const lastPrice = priceData[priceData.length - 1]?.price || data.current_price;
-      const variation = (Math.random() - 0.5) * 0.01 * lastPrice; // ±1% variation
-      const newPrice = data.current_price + variation;
+      const volatility = 0.001 * newPrice; // 0.1% volatility for real-time
       const open = lastPrice;
-      const high = Math.max(open, newPrice) + Math.random() * 0.002 * newPrice;
-      const low = Math.min(open, newPrice) - Math.random() * 0.002 * newPrice;
+      const close = newPrice;
+      const high = Math.max(open, close) + Math.random() * volatility;
+      const low = Math.min(open, close) - Math.random() * volatility;
       
       const newChartPoint: ChartData = {
         x: now,
-        y: [open, high, low, newPrice]
+        y: [open, high, low, close]
       };
       
       const newPricePoint: PriceData = {
         timestamp: now,
-        price: newPrice,
-        volume: Math.floor(Math.random() * 1000000)
+        price: close,
+        volume: Math.floor(Math.random() * 200000 + 300000) // 300K to 500K volume
       };
       
-      setChartData(prev => [...prev.slice(-29), newChartPoint]);
-      setPriceData(prev => [...prev.slice(-29), newPricePoint]);
+      setChartData(prev => [...prev.slice(-49), newChartPoint]); // Keep more points
+      setPriceData(prev => [...prev.slice(-49), newPricePoint]);
       lastUpdateRef.current = now;
       
     } catch (err) {
       console.error('Error updating real-time data:', err);
     }
-  }, [stockInfo, symbol, interval, priceData]);
+  }, [stockInfo, interval, priceData, isRealTime]);
 
   const stopRealTimeUpdates = useCallback(() => {
     if (intervalRef.current) {
@@ -135,29 +178,35 @@ const RealTimeStockChart: React.FC = () => {
 
   const startRealTimeUpdates = useCallback(() => {
     stopRealTimeUpdates();
-    const updateInterval = interval === '1m' ? 5000 : interval === '5m' ? 30000 : 60000; // Update frequency
+    // Much longer intervals to prevent spam
+    const updateInterval = interval === '1m' ? 30000 : interval === '5m' ? 60000 : 120000; // 30s, 1m, 2m
     intervalRef.current = window.setInterval(updateRealTimeData, updateInterval);
   }, [interval, updateRealTimeData, stopRealTimeUpdates]);
 
-  useEffect(() => {
-    if (symbol) {
-      loadStockData();
-    }
-  }, [symbol, loadStockData]);
+  const toggleRealTime = () => {
+    setIsRealTime(!isRealTime);
+  };
 
   useEffect(() => {
-    if (isRealTime) {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isRealTime && hasLoaded) {
       startRealTimeUpdates();
     } else {
       stopRealTimeUpdates();
     }
     
     return () => stopRealTimeUpdates();
-  }, [isRealTime, startRealTimeUpdates, stopRealTimeUpdates]);
+  }, [isRealTime, hasLoaded, startRealTimeUpdates, stopRealTimeUpdates]);
 
-  const toggleRealTime = () => {
-    setIsRealTime(!isRealTime);
-  };
+  // Only reload data when interval changes if user explicitly requests it
+  // Remove the automatic reload to prevent spam
 
   const chartOptions = {
     chart: {
@@ -275,6 +324,7 @@ const RealTimeStockChart: React.FC = () => {
                 size="sm"
                 onClick={toggleRealTime}
                 className="flex items-center gap-2"
+                disabled={!hasLoaded}
               >
                 {isRealTime ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 {isRealTime ? 'Live' : 'Start Live'}
@@ -283,7 +333,7 @@ const RealTimeStockChart: React.FC = () => {
                 variant="outline"
                 size="sm"
                 onClick={loadStockData}
-                disabled={loading}
+                disabled={loading || !symbol.trim()}
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               </Button>
@@ -300,7 +350,12 @@ const RealTimeStockChart: React.FC = () => {
                 className="w-40"
                 onKeyPress={(e) => e.key === 'Enter' && loadStockData()}
               />
-              <Button onClick={loadStockData} disabled={loading}>
+              <Button 
+                onClick={loadStockData} 
+                disabled={loading || !symbol.trim()}
+                className="flex items-center gap-2"
+              >
+                {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
                 Load
               </Button>
             </div>
@@ -312,7 +367,11 @@ const RealTimeStockChart: React.FC = () => {
               <SelectContent>
                 <SelectItem value="1m">1m</SelectItem>
                 <SelectItem value="5m">5m</SelectItem>
+                <SelectItem value="15m">15m</SelectItem>
                 <SelectItem value="1h">1h</SelectItem>
+                <SelectItem value="4h">4h</SelectItem>
+                <SelectItem value="1d">1d</SelectItem>
+                <SelectItem value="1w">1w</SelectItem>
               </SelectContent>
             </Select>
             

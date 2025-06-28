@@ -84,6 +84,19 @@ export interface TradeOrder {
   decision_id?: number;
 }
 
+export interface TradeValidationResponse {
+  valid: boolean;
+  error?: string;
+  available_cash?: number;
+  required_cash?: number;
+  max_affordable_shares?: number;
+  available_shares?: number;
+  requested_shares?: number;
+  estimated_cost?: number;
+  execution_price?: number;
+  current_price?: number;
+}
+
 export interface TradeExecutionResponse {
   message: string;
   symbol: string;
@@ -135,6 +148,16 @@ export const tradingApi = {
       return response.data;
     } catch (error) {
       console.error(`Error analyzing stock ${symbol}:`, error);
+      throw error;
+    }
+  },
+
+  validateTrade: async (order: TradeOrder): Promise<TradeValidationResponse> => {
+    try {
+      const response = await api.post('/trading/validate', order);
+      return response.data;
+    } catch (error) {
+      console.error(`Error validating trade:`, error);
       throw error;
     }
   },

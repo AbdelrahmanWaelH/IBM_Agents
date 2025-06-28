@@ -64,8 +64,11 @@ class AITradingService:
             self.db.add(stock_analysis)
             self.db.flush()  # Get the ID
             
-            # Store news analysis
-            for news in news_items:
+            # Store news analysis and log the news being analyzed
+            logger.info(f"📰 Analyzing {len(news_items)} news articles for {stock_info.symbol}")
+            for idx, news in enumerate(news_items, 1):
+                logger.info(f"📄 News {idx}: {news.title[:100]}... from {news.source}")
+                
                 sentiment = self._analyze_news_sentiment(news)
                 news_analysis = NewsAnalysis(
                     symbol=stock_info.symbol,
@@ -77,12 +80,17 @@ class AITradingService:
                     published_at=datetime.fromisoformat(news.published_at.replace('Z', '+00:00')) if isinstance(news.published_at, str) else news.published_at
                 )
                 self.db.add(news_analysis)
+                logger.info(f"📊 News sentiment for '{news.title[:50]}...': {sentiment.value if sentiment else 'neutral'}")
             
-            # Get AI decision
-            if self.llm:
-                decision = await self._get_ai_decision(stock_info, news_items, portfolio_context)
-            else:
-                decision = self._fallback_decision(stock_info)
+            if not news_items:
+                logger.warning(f"⚠️ No news articles available for {stock_info.symbol} - analysis will be based on stock data only")
+            
+            # Get AI decision - require AI for all decisions
+            if not self.llm:
+                logger.error("AI LLM is not available - cannot make trading decisions without AI")
+                raise RuntimeError("AI trading service is unavailable")
+            
+            decision = await self._get_ai_decision(stock_info, news_items, portfolio_context)
             
             # Store AI decision in database
             # Map TradeAction to TradeActionEnum
@@ -118,7 +126,7 @@ class AITradingService:
         except Exception as e:
             logger.error(f"Error in AI analysis: {e}")
             self.db.rollback()
-            return self._fallback_decision(stock_info)
+            raise RuntimeError(f"Failed to complete AI analysis for {stock_info.symbol}: {e}")
     
     async def _get_ai_decision(self, 
                               stock_info: StockInfo, 
@@ -135,24 +143,44 @@ class AITradingService:
             
         except Exception as e:
             logger.error(f"Error in AI decision: {e}")
-            return self._fallback_decision(stock_info)
+            raise RuntimeError(f"AI decision failed: {e}")
     
     def _analyze_news_sentiment(self, news: NewsItem) -> SentimentEnum:
-        """Analyze news sentiment"""
-        # Simple keyword-based sentiment analysis
-        text = f"{news.title} {news.description}".lower()
+        """Use AI to analyze news sentiment instead of simple heuristics"""
+        if not self.llm:
+            logger.warning("LLM not available for sentiment analysis, defaulting to neutral")
+            return SentimentEnum.NEUTRAL
         
-        positive_words = ['growth', 'profit', 'gain', 'rise', 'up', 'strong', 'positive', 'good', 'bullish', 'buy']
-        negative_words = ['loss', 'decline', 'fall', 'down', 'weak', 'negative', 'bad', 'bearish', 'sell', 'crash']
-        
-        positive_count = sum(1 for word in positive_words if word in text)
-        negative_count = sum(1 for word in negative_words if word in text)
-        
-        if positive_count > negative_count:
-            return SentimentEnum.POSITIVE
-        elif negative_count > positive_count:
-            return SentimentEnum.NEGATIVE
-        else:
+        try:
+            sentiment_prompt = f"""
+Analyze the sentiment of this financial news article and classify it as positive, negative, or neutral for stock investors.
+
+Title: {news.title}
+Description: {news.description}
+
+Consider:
+- Impact on stock prices and market sentiment
+- Economic implications
+- Business performance indicators
+- Market trends and forecasts
+
+Respond with ONLY one word: positive, negative, or neutral
+"""
+            
+            response = self.llm.invoke(sentiment_prompt)
+            sentiment_text = response.strip().lower()
+            
+            logger.info(f"🤖 AI sentiment analysis for '{news.title[:50]}...': {sentiment_text}")
+            
+            if 'positive' in sentiment_text:
+                return SentimentEnum.POSITIVE
+            elif 'negative' in sentiment_text:
+                return SentimentEnum.NEGATIVE
+            else:
+                return SentimentEnum.NEUTRAL
+                
+        except Exception as e:
+            logger.error(f"Error in AI sentiment analysis: {e}")
             return SentimentEnum.NEUTRAL
     
     def _create_analysis_prompt(self, 
@@ -161,56 +189,69 @@ class AITradingService:
                                portfolio_context: Dict = None) -> str:
         """Create comprehensive prompt for trading analysis"""
         
-        # Format news items
+        # Format news items with more detail
         news_text = ""
-        for news in news_items[:5]:  # Limit to top 5 news items
-            news_text += f"- {news.title}: {news.description}\n"
+        if news_items:
+            news_text += f"Found {len(news_items)} relevant news articles:\n"
+            for idx, news in enumerate(news_items[:5], 1):  # Limit to top 5 news items
+                news_text += f"{idx}. Title: {news.title}\n"
+                news_text += f"   Description: {news.description}\n"
+                news_text += f"   Source: {news.source}\n"
+                news_text += f"   Published: {news.published_at}\n\n"
+        else:
+            news_text = "No recent news articles found for this stock.\n"
         
         # Format portfolio context
         portfolio_text = ""
         if portfolio_context:
             portfolio_text = f"""
-Current Portfolio Status:
-- Cash Balance: ${portfolio_context.get('cash_balance', 0):,.2f}
+PORTFOLIO CONTEXT:
+- Available Cash: ${portfolio_context.get('cash_balance', 0):,.2f}
 - Total Portfolio Value: ${portfolio_context.get('total_value', 0):,.2f}
-- Current Holdings: {len(portfolio_context.get('holdings', []))} positions
+- Number of Holdings: {len(portfolio_context.get('holdings', []))} positions
+- Existing position in {stock_info.symbol}: {portfolio_context.get('current_shares', 0)} shares
 """
         
         prompt = f"""
-You are an expert financial analyst and trader. Analyze the following information and make a trading recommendation.
+You are an expert financial analyst specializing in AI-driven trading decisions. Analyze the comprehensive information below and provide a data-driven trading recommendation.
 
-STOCK INFORMATION:
+STOCK ANALYSIS TARGET:
 Symbol: {stock_info.symbol}
 Current Price: ${stock_info.current_price:.2f}
-Market Cap: {stock_info.market_cap or 'N/A'}
-Volume: {stock_info.volume or 'N/A'}
-Price Change: {stock_info.change_percent or 0:.2f}%
+Market Capitalization: {f"${stock_info.market_cap:,.0f}" if stock_info.market_cap else 'Not Available'}
+Trading Volume: {f"{stock_info.volume:,.0f}" if stock_info.volume else 'Not Available'}
+Daily Price Change: {stock_info.change_percent or 0:.2f}%
 
-RECENT NEWS:
+NEWS SENTIMENT & MARKET IMPACT:
 {news_text}
 
 {portfolio_text}
 
 INSTRUCTIONS:
-1. Analyze the stock's current technical indicators
-2. Evaluate the sentiment and impact of recent news
-3. Consider portfolio diversification and risk management
-4. Make a trading recommendation (BUY, SELL, or HOLD)
-5. Suggest quantity (as a percentage of available cash for BUY, or percentage of holdings for SELL)
-6. Provide confidence level (0.0 to 1.0)
-7. Give clear reasoning for your decision
+1. Analyze the stock's current technical indicators and price trends
+2. Evaluate the sentiment and impact of recent news on the stock
+3. Consider market conditions and volatility
+4. Assess risk-reward potential based on available data
+5. Make a trading recommendation (BUY, SELL, or HOLD)
+6. Suggest a reasonable trade size based on current market conditions and risk assessment
+7. Provide confidence level (0.0 to 1.0) based on the strength of your analysis
+8. Give detailed reasoning for your decision including key factors that influenced it
 
-IMPORTANT: Respond ONLY with valid JSON. Do not include any text before or after the JSON.
+IMPORTANT: 
+- Base your analysis ONLY on the provided data
+- Do not use predetermined rules or percentages
+- Consider the news sentiment and its relevance to the stock
+- Respond ONLY with valid JSON. Do not include any text before or after the JSON.
 
 JSON format (required):
 {{
     "action": "BUY",
     "confidence": 0.75,
-    "quantity_percentage": 10,
-    "reasoning": "Brief explanation of the decision"
+    "quantity_percentage": 15.5,
+    "reasoning": "Detailed explanation including key factors: technical analysis findings, news impact assessment, market sentiment, and risk considerations"
 }}
 
-Focus on paper trading simulation - prioritize learning and moderate risk-taking over extreme conservatism.
+Make informed decisions based on the data provided. Consider both opportunity and risk in your recommendations.
 """
         return prompt
     
@@ -219,85 +260,99 @@ Focus on paper trading simulation - prioritize learning and moderate risk-taking
         logger.info(f"Parsing LLM response: {response[:200]}...")
         
         try:
-            # Try to extract JSON from response
-            start_idx = response.find('{')
-            end_idx = response.rfind('}') + 1
+            # Log the raw AI response for debugging
+            logger.info(f"🤖 Raw AI Response for {stock_info.symbol}:")
+            logger.info(f"Response length: {len(response)} characters")
+            logger.info(f"First 200 chars: {response[:200]}")
             
-            if start_idx != -1 and end_idx != -1:
-                json_str = response[start_idx:end_idx]
-                
-                # Clean up the JSON string
-                json_str = json_str.strip()
+            # Try to extract JSON from response - handle multiple JSON objects
+            start_idx = response.find('{')
+            
+            if start_idx == -1:
+                logger.error("No JSON object found in AI response")
+                raise ValueError("AI response does not contain valid JSON")
+            
+            # Find the end of the first complete JSON object
+            brace_count = 0
+            end_idx = -1
+            
+            for i in range(start_idx, len(response)):
+                if response[i] == '{':
+                    brace_count += 1
+                elif response[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i + 1
+                        break
+            
+            if end_idx == -1:
+                logger.error("No complete JSON object found in AI response")
+                raise ValueError("AI response contains incomplete JSON")
+            
+            json_str = response[start_idx:end_idx].strip()
+            logger.info(f"📝 Extracted JSON: {json_str}")
+            
+            # Try to parse the JSON
+            try:
+                data = json.loads(json_str)
+                logger.info(f"✅ Successfully parsed JSON: {data}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"⚠️ Initial JSON parse failed: {e}")
                 
                 # Try to fix common JSON issues
+                import re
+                
+                # Remove trailing commas
+                fixed_json = re.sub(r',\s*}', '}', json_str)
+                fixed_json = re.sub(r',\s*]', ']', fixed_json)
+                
+                # Fix quotes issues
+                fixed_json = re.sub(r'(?<!\\)"([^"]*)"(?=\s*[,}])', r'"\1"', fixed_json)
+                
+                logger.info(f"🔧 Attempting to parse fixed JSON: {fixed_json}")
+                
                 try:
-                    data = json.loads(json_str)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Initial JSON parse failed: {e}")
-                    
-                    # Try to fix trailing commas and other issues
-                    import re
-                    json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas before }
-                    json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas before ]
-                    
-                    try:
-                        data = json.loads(json_str)
-                    except json.JSONDecodeError as e2:
-                        logger.error(f"JSON parse failed after cleanup: {e2}")
-                        logger.error(f"Problematic JSON: {json_str}")
-                        raise ValueError(f"Failed to parse AI response as JSON: {e2}")
+                    data = json.loads(fixed_json)
+                    logger.info(f"✅ Successfully parsed fixed JSON: {data}")
+                except json.JSONDecodeError as e2:
+                    logger.error(f"❌ JSON parse failed even after cleanup: {e2}")
+                    logger.error(f"Problematic JSON: {fixed_json}")
+                    raise ValueError(f"Failed to parse AI response as JSON. Original error: {e}, Fixed error: {e2}")
+            
+            # Validate and extract data with defaults
+            action_str = data.get('action', 'hold').lower().strip()
+            if action_str not in ['buy', 'sell', 'hold']:
+                logger.warning(f"Invalid action '{action_str}', defaulting to 'hold'")
+                action_str = 'hold'
+            
+            action = TradeAction(action_str)
+            confidence = max(0.0, min(1.0, float(data.get('confidence', 0.5))))
+            quantity_percentage = max(1.0, min(50.0, float(data.get('quantity_percentage', 5))))
+            reasoning = str(data.get('reasoning', 'AI analysis completed'))[:500]  # Limit reasoning length
+            
+            logger.info(f"🎯 AI Decision for {stock_info.symbol}: {action.value.upper()} (confidence: {confidence:.1%}, quantity: {quantity_percentage}%)")
+            logger.info(f"💭 AI Reasoning: {reasoning[:100]}...")
+            
+            # Calculate actual quantity based on percentage
+            # For simplicity, assume $10,000 position size for BUY orders
+            if action == TradeAction.BUY:
+                position_size = 10000 * (quantity_percentage / 100)
+                quantity = max(1, int(position_size / stock_info.current_price))
+            else:
+                quantity = int(100 * (quantity_percentage / 100))  # Assume 100 shares max holding
                 
-                action = TradeAction(data.get('action', 'hold').lower())
-                confidence = float(data.get('confidence', 0.5))
-                quantity_percentage = float(data.get('quantity_percentage', 5))
-                reasoning = data.get('reasoning', 'AI analysis completed')
-                
-                # Calculate actual quantity based on percentage
-                # For simplicity, assume $10,000 position size for BUY orders
-                if action == TradeAction.BUY:
-                    position_size = 10000 * (quantity_percentage / 100)
-                    quantity = int(position_size / stock_info.current_price)
-                else:
-                    quantity = int(100 * (quantity_percentage / 100))  # Assume 100 shares max holding
-                
-                return TradeDecision(
-                    symbol=stock_info.symbol,
-                    action=action,
-                    quantity=max(1, quantity),  # Ensure at least 1 share
-                    confidence=confidence,
-                    reasoning=reasoning,
-                    suggested_price=stock_info.current_price
-                )
+            return TradeDecision(
+                symbol=stock_info.symbol,
+                action=action,
+                quantity=max(1, quantity),  # Ensure at least 1 share
+                confidence=confidence,
+                reasoning=reasoning,
+                suggested_price=stock_info.current_price
+            )
             
         except Exception as e:
             logger.error(f"Error parsing LLM response: {e}")
-        
-        # Fallback if parsing fails
-        return self._fallback_decision(stock_info)
-    
-    def _fallback_decision(self, stock_info: StockInfo) -> TradeDecision:
-        """Simple fallback decision when AI is not available"""
-        # Simple rule-based decision as backup
-        change_percent = stock_info.change_percent or 0
-        
-        if change_percent > 2:
-            action = TradeAction.BUY
-            reasoning = "Stock showing strong positive momentum (>2% gain)"
-        elif change_percent < -3:
-            action = TradeAction.SELL
-            reasoning = "Stock showing significant decline (>3% loss)"
-        else:
-            action = TradeAction.HOLD
-            reasoning = "Stock price movement within normal range"
-        
-        return TradeDecision(
-            symbol=stock_info.symbol,
-            action=action,
-            quantity=10,  # Default small position
-            confidence=0.6,
-            reasoning=reasoning,
-            suggested_price=stock_info.current_price
-        )
+            raise RuntimeError(f"Failed to parse AI response: {e}")
     
     async def get_ai_decisions_history(self, symbol: str = None, limit: int = 50) -> List[Dict]:
         """Get AI decision history"""

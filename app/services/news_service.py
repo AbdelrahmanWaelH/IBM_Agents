@@ -54,19 +54,25 @@ class NewsService:
             data = response.json()
             articles = data.get('articles', [])
             
-            logger.info(f"NewsAPI returned {len(articles)} articles for query: {query}")
+            logger.info(f"📰 NewsAPI returned {len(articles)} articles for query: {search_query}")
             
             if not articles:
-                logger.warning(f"No news articles found for query: {query}")
+                logger.warning(f"⚠️ No news articles found for query: {search_query}")
                 # Try a fallback with a simpler query
                 fallback_params = params.copy()
                 fallback_params['q'] = query  # Just the symbol/query without additional filters
-                logger.info(f"Trying fallback query: {query}")
+                logger.info(f"🔄 Trying fallback query: {query}")
                 
                 fallback_response = requests.get(url, params=fallback_params, timeout=10)
                 fallback_response.raise_for_status()
                 fallback_data = fallback_response.json()
                 articles = fallback_data.get('articles', [])
+                
+                if articles:
+                    logger.info(f"✅ Fallback found {len(articles)} articles")
+                else:
+                    logger.error(f"❌ No articles found even with fallback for: {query}")
+                    return []
                 
                 logger.info(f"Fallback query returned {len(articles)} articles")
                 
@@ -74,22 +80,30 @@ class NewsService:
                     return []
             
             news_items = []
-            for article in articles:
+            logger.info(f"📝 Processing {len(articles)} articles from NewsAPI...")
+            
+            for idx, article in enumerate(articles, 1):
                 if article.get('title') and article.get('url'):
                     try:
                         published_at = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
-                        news_items.append(NewsItem(
+                        news_item = NewsItem(
                             title=article['title'][:200],  # Limit title length
                             description=(article.get('description') or '')[:500],  # Limit description
                             url=article['url'],
                             published_at=published_at,
                             source=article['source']['name']
-                        ))
+                        )
+                        news_items.append(news_item)
+                        
+                        logger.info(f"📄 Article {idx}: '{news_item.title[:50]}...' from {news_item.source}")
+                        
                     except Exception as e:
-                        logger.warning(f"Error parsing article: {e}")
+                        logger.warning(f"⚠️ Error parsing article {idx}: {e}")
                         continue
+                else:
+                    logger.warning(f"⚠️ Skipping article {idx}: missing title or URL")
             
-            logger.info(f"Successfully fetched {len(news_items)} news articles for: {query}")
+            logger.info(f"✅ Successfully processed {len(news_items)} news articles for: {query}")
             return news_items
         
         except Exception as e:

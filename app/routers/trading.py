@@ -106,6 +106,63 @@ async def analyze_stock(symbol: str):
             detail=f"Error analyzing stock {symbol.upper()}: {str(e)}"
         )
 
+@router.post("/validate", response_model=dict)
+async def validate_trade(order: TradeOrder):
+    """Validate a trade order before execution"""
+    try:
+        # Basic validation
+        if not order.symbol or not order.symbol.strip():
+            return {"valid": False, "error": "Symbol is required"}
+        
+        if order.quantity <= 0:
+            return {"valid": False, "error": "Quantity must be positive"}
+        
+        # Get current stock price and portfolio
+        stock_info = await stock_service.get_stock_info(order.symbol.upper())
+        if not stock_info:
+            return {"valid": False, "error": f"No market data available for symbol {order.symbol.upper()}"}
+        
+        portfolio = await portfolio_service.get_portfolio({order.symbol.upper(): stock_info.current_price})
+        execution_price = order.price if order.price and order.price > 0 else stock_info.current_price
+        
+        if order.action.lower() == 'buy':
+            total_cost = order.quantity * execution_price
+            if portfolio.cash_balance < total_cost:
+                return {
+                    "valid": False, 
+                    "error": f"Insufficient funds. Need ${total_cost:,.2f}, have ${portfolio.cash_balance:,.2f}",
+                    "available_cash": portfolio.cash_balance,
+                    "required_cash": total_cost,
+                    "max_affordable_shares": int(portfolio.cash_balance / execution_price)
+                }
+        
+        elif order.action.lower() == 'sell':
+            # Find current holding
+            current_holding = None
+            for holding in portfolio.holdings:
+                if holding['symbol'] == order.symbol.upper():
+                    current_holding = holding
+                    break
+            
+            if not current_holding or current_holding['quantity'] < order.quantity:
+                available_shares = current_holding['quantity'] if current_holding else 0
+                return {
+                    "valid": False,
+                    "error": f"Insufficient shares. Need {order.quantity}, have {available_shares}",
+                    "available_shares": available_shares,
+                    "requested_shares": order.quantity
+                }
+        
+        return {
+            "valid": True,
+            "estimated_cost": order.quantity * execution_price,
+            "execution_price": execution_price,
+            "current_price": stock_info.current_price
+        }
+        
+    except Exception as e:
+        return {"valid": False, "error": f"Validation error: {str(e)}"}
+
 @router.post("/execute", response_model=dict)
 async def execute_trade(order: TradeOrder):
     """Execute a trade order"""

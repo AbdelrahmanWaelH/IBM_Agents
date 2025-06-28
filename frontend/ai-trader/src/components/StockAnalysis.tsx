@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { TrendingUp, TrendingDown, Minus, Brain } from 'lucide-react';
-import type { StockInfo, TradeDecision } from '../services/api';
+import { Input } from './ui/input';
+import { Alert, AlertDescription } from './ui/alert';
+import { Label } from './ui/label';
+import { TrendingUp, TrendingDown, Minus, Brain, AlertCircle, CheckCircle, Calculator } from 'lucide-react';
+import { tradingApi, type StockInfo, type TradeDecision, type TradeValidationResponse } from '../services/api';
 
 interface StockAnalysisProps {
   stock: StockInfo;
@@ -12,6 +15,57 @@ interface StockAnalysisProps {
 }
 
 const StockAnalysis: React.FC<StockAnalysisProps> = ({ stock, decision, onExecuteTrade }) => {
+  const [customQuantity, setCustomQuantity] = useState<number>(decision.quantity);
+  const [validation, setValidation] = useState<TradeValidationResponse | null>(null);
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const validateTrade = useCallback(async () => {
+    if (decision.action === 'hold') return;
+    
+    setValidationLoading(true);
+    setValidationError(null);
+    
+    try {
+      const validationResult = await tradingApi.validateTrade({
+        symbol: stock.symbol,
+        action: decision.action,
+        quantity: customQuantity,
+        price: stock.current_price
+      });
+      setValidation(validationResult);
+    } catch (error) {
+      setValidationError('Failed to validate trade');
+      console.error('Trade validation error:', error);
+    } finally {
+      setValidationLoading(false);
+    }
+  }, [decision.action, stock.symbol, stock.current_price, customQuantity]);
+
+  // Effect to validate trade when quantity changes
+  useEffect(() => {
+    if (decision.action !== 'hold' && customQuantity > 0) {
+      validateTrade();
+    }
+  }, [customQuantity, decision.action, stock.symbol, validateTrade]);
+
+  const handleQuantityChange = (value: string) => {
+    const quantity = parseInt(value) || 0;
+    setCustomQuantity(quantity);
+  };
+
+  const handleExecuteTrade = () => {
+    if (!validation?.valid) return;
+    
+    const updatedDecision = {
+      ...decision,
+      quantity: customQuantity,
+      suggested_price: stock.current_price
+    };
+    
+    onExecuteTrade(updatedDecision);
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -127,8 +181,8 @@ const StockAnalysis: React.FC<StockAnalysisProps> = ({ stock, decision, onExecut
               <p className="text-lg font-semibold">{decision.quantity} shares</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600">Suggested Price</p>
-              <p className="text-lg font-semibold">{formatCurrency(decision.suggested_price)}</p>
+              <p className="text-sm text-gray-600">Current Price</p>
+              <p className="text-lg font-semibold">{formatCurrency(stock.current_price)}</p>
             </div>
           </div>
 
@@ -138,13 +192,107 @@ const StockAnalysis: React.FC<StockAnalysisProps> = ({ stock, decision, onExecut
           </div>
 
           {decision.action !== 'hold' && (
-            <Button 
-              onClick={() => onExecuteTrade(decision)}
-              className="w-full"
-              variant={decision.action === 'buy' ? 'default' : 'destructive'}
-            >
-              Execute {decision.action.toUpperCase()} Order
-            </Button>
+            <div className="space-y-4">
+              {/* Custom Quantity Input */}
+              <div className="space-y-2">
+                <Label htmlFor="quantity">Trade Quantity (shares)</Label>
+                <Input
+                  id="quantity"
+                  type="number"
+                  min="1"
+                  value={customQuantity}
+                  onChange={(e) => handleQuantityChange(e.target.value)}
+                  placeholder="Enter number of shares"
+                />
+              </div>
+
+              {/* Validation Messages */}
+              {validationError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{validationError}</AlertDescription>
+                </Alert>
+              )}
+
+              {validation && !validation.valid && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {validation.error}
+                    {validation.max_affordable_shares && decision.action === 'buy' && (
+                      <div className="mt-2">
+                        <strong>Max affordable shares:</strong> {validation.max_affordable_shares}
+                        <br />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-1"
+                          onClick={() => setCustomQuantity(validation.max_affordable_shares!)}
+                        >
+                          Use Max ({validation.max_affordable_shares})
+                        </Button>
+                      </div>
+                    )}
+                    {validation.available_shares && decision.action === 'sell' && (
+                      <div className="mt-2">
+                        <strong>Available shares:</strong> {validation.available_shares}
+                        <br />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-1"
+                          onClick={() => setCustomQuantity(validation.available_shares!)}
+                        >
+                          Use Available ({validation.available_shares})
+                        </Button>
+                      </div>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {validation && validation.valid && (
+                <Alert>
+                  <CheckCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Trade validated successfully!
+                    <div className="mt-2 text-sm">
+                      <strong>Estimated cost:</strong> {formatCurrency(validation.estimated_cost || 0)}
+                      {decision.action === 'buy' && validation.available_cash && (
+                        <>
+                          <br />
+                          <strong>Available cash:</strong> {formatCurrency(validation.available_cash)}
+                        </>
+                      )}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Trade Execution Button */}
+              <Button 
+                onClick={handleExecuteTrade}
+                className="w-full"
+                variant={decision.action === 'buy' ? 'default' : 'destructive'}
+                disabled={validationLoading || !validation?.valid}
+              >
+                {validationLoading ? (
+                  <>
+                    <Calculator className="h-4 w-4 mr-2 animate-spin" />
+                    Validating...
+                  </>
+                ) : (
+                  <>
+                    Execute {decision.action.toUpperCase()} Order
+                    {validation?.valid && (
+                      <span className="ml-2">
+                        ({customQuantity} shares @ {formatCurrency(stock.current_price)})
+                      </span>
+                    )}
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

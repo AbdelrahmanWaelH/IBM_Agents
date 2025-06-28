@@ -1,6 +1,10 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from pydantic import BaseModel
 from services.automated_trading_engine import trading_engine, TradingMode
 import asyncio
+
+class SymbolRequest(BaseModel):
+    symbol: str
 
 router = APIRouter()
 
@@ -97,12 +101,12 @@ async def update_trading_symbols(symbols: list[str]):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/symbols/add")
-async def add_trading_symbol(symbol: str):
+async def add_trading_symbol(request: SymbolRequest):
     """Add a new symbol to the trading list"""
     if trading_engine.is_running:
         raise HTTPException(status_code=400, detail="Cannot modify symbols while engine is running")
     
-    symbol = symbol.strip().upper()
+    symbol = request.symbol.strip().upper()
     if not symbol:
         raise HTTPException(status_code=400, detail="Symbol cannot be empty")
     
@@ -289,3 +293,96 @@ async def update_confidence_threshold(threshold: float):
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/ai-recommend-stocks")
+async def ai_recommend_stocks(count: int = 5):
+    """Let AI recommend stocks for trading"""
+    try:
+        from services.ai_service import AITradingService
+        from services.stock_service import StockService
+        
+        ai_service = AITradingService()
+        stock_service = StockService()
+        
+        # Popular stocks to consider (AI will analyze these and choose)
+        candidate_stocks = [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD", 
+            "NFLX", "DIS", "JPM", "BAC", "WMT", "JNJ", "PG", "KO", "PEP",
+            "V", "MA", "PYPL", "ADBE", "CRM", "ORCL", "IBM", "INTC"
+        ]
+        
+        recommended_stocks = []
+        
+        # Get AI to analyze each stock and recommend the best ones
+        for symbol in candidate_stocks[:15]:  # Analyze first 15 to avoid too many API calls
+            try:
+                stock_info = await stock_service.get_stock_info(symbol)
+                if not stock_info:
+                    continue
+                    
+                # Get AI analysis
+                news_items = []  # Could add news analysis here
+                decision = await ai_service.analyze_and_decide(stock_info, news_items)
+                
+                if decision.action in ['buy'] and decision.confidence > 0.6:
+                    recommended_stocks.append({
+                        'symbol': symbol,
+                        'confidence': decision.confidence,
+                        'action': decision.action.value,
+                        'reasoning': decision.reasoning,
+                        'current_price': stock_info.current_price,
+                        'change_percent': stock_info.change_percent
+                    })
+                    
+            except Exception as e:
+                print(f"Error analyzing {symbol}: {e}")
+                continue
+        
+        # Sort by confidence and return top recommendations
+        recommended_stocks.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        return {
+            "recommended_stocks": recommended_stocks[:count],
+            "analysis_summary": f"AI analyzed {len(candidate_stocks)} stocks and found {len(recommended_stocks)} good opportunities",
+            "total_analyzed": len(candidate_stocks)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate AI recommendations: {str(e)}")
+
+@router.post("/ai-add-recommended")
+async def ai_add_recommended_stocks():
+    """Add AI-recommended stocks to trading list"""
+    try:
+        # Get AI recommendations
+        recommendations_response = await ai_recommend_stocks(count=3)
+        recommended_stocks = recommendations_response["recommended_stocks"]
+        
+        added_symbols = []
+        errors = []
+        
+        for stock in recommended_stocks:
+            symbol = stock['symbol']
+            
+            # Check if not already in list
+            if symbol not in trading_engine.trading_symbols:
+                try:
+                    new_symbols = trading_engine.trading_symbols + [symbol]
+                    trading_engine.update_trading_symbols(new_symbols)
+                    added_symbols.append({
+                        'symbol': symbol,
+                        'confidence': stock['confidence'],
+                        'reasoning': stock['reasoning']
+                    })
+                except Exception as e:
+                    errors.append(f"Failed to add {symbol}: {str(e)}")
+        
+        return {
+            "message": f"AI added {len(added_symbols)} recommended stocks",
+            "added_symbols": added_symbols,
+            "current_symbols": trading_engine.trading_symbols,
+            "errors": errors
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add AI recommendations: {str(e)}")

@@ -4,19 +4,32 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { tradingApi } from '../services/api';
 import { 
   Plus, 
   Settings, 
-  TrendingUp, 
   AlertCircle,
   CheckCircle,
-  X
+  X,
+  Brain,
+  Star,
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 
 interface SymbolData {
   symbols: string[];
   count: number;
+}
+
+interface AIRecommendation {
+  symbol: string;
+  confidence: number;
+  action: string;
+  reasoning: string;
+  current_price: number;
+  change_percent: number;
 }
 
 const SymbolManager: React.FC = () => {
@@ -26,6 +39,18 @@ const SymbolManager: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isEngineRunning, setIsEngineRunning] = useState(false);
+  const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
+  const [selectedRecommendations, setSelectedRecommendations] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'predefined' | 'ai'>('predefined');
+
+  // Predefined popular symbols with categories
+  const predefinedSymbols = {
+    'Tech Giants': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA'],
+    'Financial': ['JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'V', 'MA'],
+    'Consumer': ['WMT', 'PG', 'KO', 'PEP', 'NKE', 'DIS', 'HD', 'MCD'],
+    'Healthcare': ['JNJ', 'PFE', 'UNH', 'ABBV', 'TMO', 'ABT', 'CVS'],
+    'Energy': ['XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC']
+  };
 
   useEffect(() => {
     loadSymbols();
@@ -39,10 +64,9 @@ const SymbolManager: React.FC = () => {
         const data: SymbolData = await response.json();
         setSymbols(data.symbols);
       } else {
-        setError('Failed to load symbols');
+        console.error('Failed to load symbols');
       }
     } catch (error) {
-      setError('Error loading symbols');
       console.error('Error loading symbols:', error);
     }
   };
@@ -68,14 +92,14 @@ const SymbolManager: React.FC = () => {
     }
   };
 
-  const addSymbol = async () => {
-    if (!newSymbol.trim()) return;
+  const addSymbol = async (symbolToAdd: string) => {
+    if (!symbolToAdd.trim()) return;
     
-    const symbolToAdd = newSymbol.trim().toUpperCase();
+    const symbol = symbolToAdd.trim().toUpperCase();
     
     // Check if symbol already exists
-    if (symbols.includes(symbolToAdd)) {
-      setError(`Symbol ${symbolToAdd} is already in the list`);
+    if (symbols.includes(symbol)) {
+      setError(`Symbol ${symbol} is already in the list`);
       return;
     }
     
@@ -85,25 +109,26 @@ const SymbolManager: React.FC = () => {
     
     try {
       // Validate symbol first
-      const isValid = await validateSymbol(symbolToAdd);
+      const isValid = await validateSymbol(symbol);
       if (!isValid) {
-        setError(`Invalid symbol: ${symbolToAdd}. Please check the symbol and try again.`);
+        setError(`Invalid symbol: ${symbol}. Please check the symbol and try again.`);
         setLoading(false);
         return;
       }
 
-      const response = await fetch(`/api/automated-trading/symbols/add?symbol=${encodeURIComponent(symbolToAdd)}`, {
+      const response = await fetch('/api/automated-trading/symbols/add', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ symbol })
       });
       
       if (response.ok) {
         const data: SymbolData = await response.json();
         setSymbols(data.symbols);
         setNewSymbol('');
-        setSuccess(`Symbol ${symbolToAdd} added successfully`);
+        setSuccess(`Symbol ${symbol} added successfully`);
       } else {
         const errorData = await response.json();
         setError(errorData.detail || 'Failed to add symbol');
@@ -142,52 +167,101 @@ const SymbolManager: React.FC = () => {
     }
   };
 
-  const updateAllSymbols = async (newSymbols: string[]) => {
+  const getAIRecommendations = async () => {
     setLoading(true);
     setError(null);
     setSuccess(null);
     
     try {
-      const response = await fetch('/api/automated-trading/symbols', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(newSymbols),
+      const response = await fetch('/api/automated-trading/ai-recommend-stocks?count=8', {
+        method: 'POST',
       });
       
       if (response.ok) {
-        const data: SymbolData = await response.json();
-        setSymbols(data.symbols);
-        setSuccess('Symbols updated successfully');
+        const data = await response.json();
+        setAiRecommendations(data.recommended_stocks);
+        setSuccess(`AI analyzed stocks and found ${data.recommended_stocks.length} good opportunities`);
       } else {
         const errorData = await response.json();
-        setError(errorData.detail || 'Failed to update symbols');
+        setError(errorData.detail || 'Failed to get AI recommendations');
       }
     } catch (error) {
-      setError('Error updating symbols');
-      console.error('Error updating symbols:', error);
+      setError('Error getting AI recommendations');
+      console.error('Error getting AI recommendations:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  const toggleRecommendationSelection = (symbol: string) => {
+    setSelectedRecommendations(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(symbol)) {
+        newSet.delete(symbol);
+      } else {
+        newSet.add(symbol);
+      }
+      return newSet;
+    });
+  };
+
+  const addSelectedAIRecommendations = async () => {
+    if (selectedRecommendations.size === 0) {
+      setError('Please select at least one recommendation');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    
+    const addedSymbols = [];
+    const errors = [];
+
+    for (const symbol of Array.from(selectedRecommendations)) {
+      try {
+        if (!symbols.includes(symbol)) {
+          const response = await fetch('/api/automated-trading/symbols/add', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ symbol })
+          });
+          
+          if (response.ok) {
+            addedSymbols.push(symbol);
+          } else {
+            const errorData = await response.json();
+            errors.push(`${symbol}: ${errorData.detail}`);
+          }
+        } else {
+          errors.push(`${symbol}: Already in list`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${symbol}: Error adding due to ${message}`);
+      }
+    }
+
+    // Reload symbols
+    await loadSymbols();
+    
+    if (addedSymbols.length > 0) {
+      setSuccess(`Added ${addedSymbols.length} symbols: ${addedSymbols.join(', ')}`);
+    }
+    
+    if (errors.length > 0) {
+      setError(`Some errors occurred: ${errors.join('; ')}`);
+    }
+
+    setSelectedRecommendations(new Set());
+    setLoading(false);
+  };
+
   const clearMessages = () => {
     setError(null);
     setSuccess(null);
-  };
-
-  // Default popular stock symbols
-  const popularSymbols = [
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'BRK.B',
-    'V', 'JNJ', 'WMT', 'JPM', 'PG', 'UNH', 'HD', 'MA', 'DIS', 'ADBE',
-    'NFLX', 'CRM', 'XOM', 'VZ', 'ABBV', 'KO', 'PEP', 'TMO', 'COST', 'AVGO'
-  ];
-
-  const addPopularSymbol = (symbol: string) => {
-    if (!symbols.includes(symbol)) {
-      setNewSymbol(symbol);
-    }
   };
 
   return (
@@ -199,166 +273,228 @@ const SymbolManager: React.FC = () => {
             Symbol Management
           </CardTitle>
           <CardDescription>
-            Manage the stock symbols monitored by the AI trading engine
+            Manage trading symbols with predefined lists or AI recommendations
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Status Alert */}
-          {isEngineRunning && (
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                The trading engine is currently running. Stop the engine to modify symbols.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Success/Error Messages */}
+        <CardContent>
           {error && (
-            <Alert variant="destructive">
-              <X className="h-4 w-4" />
-              <AlertDescription className="flex items-center justify-between">
-                {error}
-                <Button variant="ghost" size="sm" onClick={clearMessages}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </AlertDescription>
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
           {success && (
-            <Alert className="border-green-200 bg-green-50">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription className="flex items-center justify-between text-green-800">
-                {success}
-                <Button variant="ghost" size="sm" onClick={clearMessages}>
-                  <X className="h-4 w-4" />
-                </Button>
+            <Alert className="mb-4">
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+
+          {isEngineRunning && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Trading engine is running. Stop it to modify symbols.
               </AlertDescription>
             </Alert>
           )}
 
-          {/* Add Symbol */}
-          <div className="flex gap-2">
-            <Input
-              placeholder="Enter stock symbol (e.g., AAPL)"
-              value={newSymbol}
-              onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
-              onKeyPress={(e) => e.key === 'Enter' && addSymbol()}
-              disabled={isEngineRunning || loading}
-              className="flex-1"
-            />
-            <Button 
-              onClick={addSymbol} 
-              disabled={isEngineRunning || loading || !newSymbol.trim()}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Symbol
-            </Button>
-          </div>
+          <Tabs value={mode} onValueChange={(value) => setMode(value as 'predefined' | 'ai')} className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="predefined" className="flex items-center gap-2">
+                <Star className="h-4 w-4" />
+                Predefined Symbols
+              </TabsTrigger>
+              <TabsTrigger value="ai" className="flex items-center gap-2">
+                <Brain className="h-4 w-4" />
+                AI Recommendations
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="predefined" className="space-y-4">
+              {/* Manual Symbol Addition */}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter symbol (e.g., AAPL)"
+                  value={newSymbol}
+                  onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
+                  onKeyPress={(e) => e.key === 'Enter' && addSymbol(newSymbol)}
+                  disabled={isEngineRunning || loading}
+                />
+                <Button 
+                  onClick={() => addSymbol(newSymbol)}
+                  disabled={isEngineRunning || loading || !newSymbol.trim()}
+                  className="flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+
+              {/* Predefined Categories */}
+              <div className="space-y-4">
+                {Object.entries(predefinedSymbols).map(([category, categorySymbols]) => (
+                  <div key={category}>
+                    <h4 className="font-semibold mb-2">{category}</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {categorySymbols.map((symbol) => (
+                        <Button
+                          key={symbol}
+                          variant={symbols.includes(symbol) ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => symbols.includes(symbol) ? removeSymbol(symbol) : addSymbol(symbol)}
+                          disabled={isEngineRunning || loading}
+                          className="flex items-center gap-1"
+                        >
+                          {symbols.includes(symbol) ? (
+                            <>
+                              <CheckCircle className="h-3 w-3" />
+                              {symbol}
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-3 w-3" />
+                              {symbol}
+                            </>
+                          )}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="ai" className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold">AI Stock Recommendations</h4>
+                  <p className="text-sm text-gray-600">Let AI analyze and recommend the best stocks to trade</p>
+                </div>
+                <Button 
+                  onClick={getAIRecommendations}
+                  disabled={loading}
+                  className="flex items-center gap-2"
+                >
+                  {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+                  Get AI Recommendations
+                </Button>
+              </div>
+
+              {aiRecommendations.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Select recommendations to add:</p>
+                    <Button 
+                      onClick={addSelectedAIRecommendations}
+                      disabled={selectedRecommendations.size === 0 || loading || isEngineRunning}
+                      variant="default"
+                      size="sm"
+                      className="flex items-center gap-2"
+                    >
+                      <Zap className="h-4 w-4" />
+                      Add Selected ({selectedRecommendations.size})
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {aiRecommendations.map((rec) => (
+                      <div 
+                        key={rec.symbol} 
+                        className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                          selectedRecommendations.has(rec.symbol) 
+                            ? 'border-blue-500 bg-blue-50' 
+                            : 'border-gray-200 hover:border-gray-300'
+                        } ${symbols.includes(rec.symbol) ? 'opacity-50' : ''}`}
+                        onClick={() => !symbols.includes(rec.symbol) && toggleRecommendationSelection(rec.symbol)}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="checkbox"
+                              checked={selectedRecommendations.has(rec.symbol)}
+                              disabled={symbols.includes(rec.symbol)}
+                              readOnly
+                              className="mt-1"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold">{rec.symbol}</span>
+                                {symbols.includes(rec.symbol) && (
+                                  <Badge variant="default" className="text-xs">Already Added</Badge>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                ${rec.current_price.toFixed(2)} 
+                                <span className={rec.change_percent >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {rec.change_percent >= 0 ? ' +' : ' '}{rec.change_percent?.toFixed(2)}%
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className={
+                            rec.confidence >= 0.8 ? 'bg-green-100 text-green-800' :
+                            rec.confidence >= 0.6 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                          }>
+                            {(rec.confidence * 100).toFixed(0)}%
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2 line-clamp-2">{rec.reasoning}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {aiRecommendations.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <Brain className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p>Click "Get AI Recommendations" to let AI analyze and suggest the best stocks for trading</p>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
 
           {/* Current Symbols */}
-          <div>
-            <h4 className="text-sm font-medium mb-3">
-              Current Symbols ({symbols.length})
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              {symbols.map((symbol) => (
-                <Badge key={symbol} variant="secondary" className="flex items-center gap-2 px-3 py-1">
-                  <TrendingUp className="h-3 w-3" />
-                  {symbol}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeSymbol(symbol)}
-                    disabled={isEngineRunning || loading || symbols.length <= 1}
-                    className="h-4 w-4 p-0 hover:bg-red-100"
-                  >
-                    <X className="h-3 w-3 text-red-500" />
-                  </Button>
-                </Badge>
-              ))}
-            </div>
-            {symbols.length === 0 && (
-              <div className="text-center py-4 text-gray-500">
-                No symbols configured
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Popular Symbols */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Popular Symbols</CardTitle>
-          <CardDescription>
-            Quick-add popular stock symbols to your monitoring list
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            {popularSymbols.map((symbol) => (
-              <Button
-                key={symbol}
-                variant={symbols.includes(symbol) ? "secondary" : "outline"}
-                size="sm"
-                onClick={() => addPopularSymbol(symbol)}
-                disabled={isEngineRunning || symbols.includes(symbol)}
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-semibold">Current Trading Symbols ({symbols.length})</h4>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={clearMessages}
                 className="text-xs"
               >
-                {symbols.includes(symbol) ? (
-                  <>
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    {symbol}
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-3 w-3 mr-1" />
-                    {symbol}
-                  </>
-                )}
+                Clear Messages
               </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Bulk Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Bulk Actions</CardTitle>
-          <CardDescription>
-            Preset symbol configurations for different trading strategies
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <Button
-              variant="outline"
-              onClick={() => updateAllSymbols(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'])}
-              disabled={isEngineRunning || loading}
-              className="text-sm"
-            >
-              Tech Giants
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => updateAllSymbols(['SPY', 'QQQ', 'IWM', 'VTI', 'VOO'])}
-              disabled={isEngineRunning || loading}
-              className="text-sm"
-            >
-              ETFs
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => updateAllSymbols(['JPM', 'BAC', 'WFC', 'C', 'GS'])}
-              disabled={isEngineRunning || loading}
-              className="text-sm"
-            >
-              Banking
-            </Button>
+            </div>
+            
+            {symbols.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {symbols.map((symbol) => (
+                  <Badge 
+                    key={symbol} 
+                    variant="default" 
+                    className="flex items-center gap-1 py-1 px-2"
+                  >
+                    {symbol}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeSymbol(symbol)}
+                      disabled={isEngineRunning || loading}
+                      className="h-4 w-4 p-0 ml-1 hover:bg-red-100"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm">No symbols added yet. Use the tabs above to add symbols.</p>
+            )}
           </div>
         </CardContent>
       </Card>

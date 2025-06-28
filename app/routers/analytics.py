@@ -113,12 +113,26 @@ async def get_sentiment_summary(
     
     news_data = await ai_service.get_news_analysis(symbol=symbol, limit=100)
     
-    # Filter by days
-    cutoff_date = datetime.now() - timedelta(days=days)
-    recent_news = [
-        item for item in news_data
-        if datetime.fromisoformat(item['analyzed_at'].replace('T', ' ').replace('Z', '')) >= cutoff_date
-    ]
+    # Filter by days - make both datetimes timezone-aware for comparison
+    from datetime import timezone
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+    recent_news = []
+    
+    for item in news_data:
+        try:
+            # Parse the datetime and ensure it's timezone-aware
+            analyzed_at_str = item['analyzed_at'].replace('T', ' ').replace('Z', '')
+            analyzed_at = datetime.fromisoformat(analyzed_at_str)
+            
+            # If datetime is naive, assume UTC
+            if analyzed_at.tzinfo is None:
+                analyzed_at = analyzed_at.replace(tzinfo=timezone.utc)
+            
+            if analyzed_at >= cutoff_date:
+                recent_news.append(item)
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Error parsing date for news item: {e}")
+            continue
     
     # Calculate sentiment distribution
     sentiment_counts = {"positive": 0, "negative": 0, "neutral": 0}
