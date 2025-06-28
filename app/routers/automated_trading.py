@@ -304,17 +304,33 @@ async def ai_recommend_stocks(count: int = 5):
         ai_service = AITradingService()
         stock_service = StockService()
         
-        # Popular stocks to consider (AI will analyze these and choose)
+        # Comprehensive list of candidate stocks from different sectors
+        # This is for AI recommendations only - not the trading engine symbols
         candidate_stocks = [
+            # Technology Giants
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD", 
-            "NFLX", "DIS", "JPM", "BAC", "WMT", "JNJ", "PG", "KO", "PEP",
-            "V", "MA", "PYPL", "ADBE", "CRM", "ORCL", "IBM", "INTC"
+            "NFLX", "ADBE", "CRM", "ORCL", "IBM", "INTC", "PYPL",
+            # Financial Services
+            "JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP",
+            # Healthcare & Pharmaceuticals
+            "JNJ", "PFE", "UNH", "ABBV", "TMO", "ABT", "CVS", "MRK",
+            # Consumer Goods
+            "WMT", "PG", "KO", "PEP", "NKE", "DIS", "HD", "MCD", "COST",
+            # Energy & Utilities
+            "XOM", "CVX", "COP", "NEE", "DUK", "SO",
+            # Aerospace & Defense
+            "BA", "LMT", "RTX", "NOC",
+            # Other Growth Stocks
+            "ROKU", "SHOP", "ZOOM", "TWLO", "SQ", "SPOT"
         ]
         
         recommended_stocks = []
         
-        # Get AI to analyze each stock and recommend the best ones
-        for symbol in candidate_stocks[:15]:  # Analyze first 15 to avoid too many API calls
+        # Get AI to analyze a random subset of stocks to provide variety
+        import random
+        selected_candidates = random.sample(candidate_stocks, min(20, len(candidate_stocks)))
+        
+        for symbol in selected_candidates:
             try:
                 stock_info = await stock_service.get_stock_info(symbol)
                 if not stock_info:

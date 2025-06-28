@@ -7,7 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 second timeout
+  timeout: 120000, // 2 minutes timeout for AI operations
 });
 
 // Add response interceptor for better error handling
@@ -447,7 +447,7 @@ export const automatedTradingApi = {
 
   addSymbol: async (symbol: string) => {
     try {
-      const response = await api.post(`/automated-trading/symbols/add?symbol=${symbol}`);
+      const response = await api.post('/automated-trading/symbols/add', { symbol });
       return response.data;
     } catch (error) {
       console.error(`Error adding symbol ${symbol}:`, error);
@@ -461,6 +461,25 @@ export const automatedTradingApi = {
       return response.data;
     } catch (error) {
       console.error(`Error removing symbol ${symbol}:`, error);
+      throw error;
+    }
+  },
+
+  getAIRecommendations: async (count = 8) => {
+    try {
+      // Create a separate instance with longer timeout for AI operations
+      const aiApi = axios.create({
+        baseURL: API_BASE_URL,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 180000, // 3 minutes for AI recommendations
+      });
+      
+      const response = await aiApi.post(`/automated-trading/ai-recommend-stocks?count=${count}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error getting AI recommendations:', error);
       throw error;
     }
   }

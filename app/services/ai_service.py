@@ -1,10 +1,12 @@
 from langchain_ibm import WatsonxLLM
 from langchain.schema import SystemMessage, HumanMessage
-from typing import List, Dict
+from typing import List, Dict, Optional
 from models import NewsItem, StockInfo, TradeDecision, TradeAction
 from config import settings
 import json
 import logging
+import yfinance as yf
+import time
 from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum, TradeActionEnum
 from datetime import datetime
 
@@ -14,6 +16,49 @@ class AITradingService:
     def __init__(self):
         self.llm = self._initialize_llm()
         self.db = SessionLocal()
+        self.company_cache = {}
+        self.cache_duration = 3600  # Cache company info for 1 hour
+        
+    def _get_company_info(self, symbol: str) -> Optional[Dict[str, str]]:
+        """Dynamically get company information using yfinance"""
+        symbol = symbol.upper().strip()
+        current_time = time.time()
+        
+        # Check cache first
+        if symbol in self.company_cache:
+            cached_data = self.company_cache[symbol]
+            if current_time - cached_data['timestamp'] < self.cache_duration:
+                return cached_data['info']
+        
+        try:
+            logger.info(f"Fetching company info for AI analysis: {symbol}")
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            if info and isinstance(info, dict):
+                company_info = {
+                    'longName': info.get('longName', ''),
+                    'shortName': info.get('shortName', ''),
+                    'longBusinessSummary': info.get('longBusinessSummary', ''),
+                    'sector': info.get('sector', ''),
+                    'industry': info.get('industry', '')
+                }
+                
+                # Cache the result
+                self.company_cache[symbol] = {
+                    'info': company_info,
+                    'timestamp': current_time
+                }
+                
+                logger.info(f"✅ Retrieved company info for AI: {symbol} -> {company_info.get('longName', 'N/A')}")
+                return company_info
+            else:
+                logger.warning(f"No company info available for AI analysis: {symbol}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error fetching company info for AI analysis: {symbol}: {e}")
+            return None
     
     def _initialize_llm(self):
         """Initialize IBM Watsonx LLM"""
@@ -187,7 +232,25 @@ Respond with ONLY one word: positive, negative, or neutral
                                stock_info: StockInfo, 
                                news_items: List[NewsItem],
                                portfolio_context: Dict = None) -> str:
-        """Create comprehensive prompt for trading analysis"""
+        """Create comprehensive prompt for trading analysis with dynamic company info"""
+        
+        # Get dynamic company information
+        company_info = self._get_company_info(stock_info.symbol)
+        
+        # Determine company name and context
+        if company_info and company_info.get('longName'):
+            company_name = company_info['longName']
+            company_context = f"""
+COMPANY INFORMATION:
+Full Name: {company_info.get('longName', 'N/A')}
+Short Name: {company_info.get('shortName', 'N/A')}
+Sector: {company_info.get('sector', 'N/A')}
+Industry: {company_info.get('industry', 'N/A')}
+Business Summary: {company_info.get('longBusinessSummary', 'N/A')[:300]}...
+"""
+        else:
+            company_name = stock_info.symbol
+            company_context = f"Limited company information available for {stock_info.symbol}."
         
         # Format news items with more detail
         news_text = ""
@@ -215,6 +278,8 @@ PORTFOLIO CONTEXT:
         prompt = f"""
 You are an expert financial analyst specializing in AI-driven trading decisions. Analyze the comprehensive information below and provide a data-driven trading recommendation.
 
+{company_context}
+
 STOCK ANALYSIS TARGET:
 Symbol: {stock_info.symbol}
 Current Price: ${stock_info.current_price:.2f}
@@ -228,10 +293,10 @@ NEWS SENTIMENT & MARKET IMPACT:
 {portfolio_text}
 
 INSTRUCTIONS:
-1. Analyze the stock's current technical indicators and price trends
-2. Evaluate the sentiment and impact of recent news on the stock
-3. Consider market conditions and volatility
-4. Assess risk-reward potential based on available data
+1. Analyze {company_name}'s current technical indicators and price trends
+2. Evaluate the sentiment and impact of recent news on {company_name}
+3. Consider market conditions and volatility affecting {company_name}
+4. Assess risk-reward potential based on available data and company fundamentals
 5. Make a trading recommendation (BUY, SELL, or HOLD)
 6. Suggest a reasonable trade size based on current market conditions and risk assessment
 7. Provide confidence level (0.0 to 1.0) based on the strength of your analysis
@@ -241,6 +306,7 @@ IMPORTANT:
 - Base your analysis ONLY on the provided data
 - Do not use predetermined rules or percentages
 - Consider the news sentiment and its relevance to the stock
+- Factor in company fundamentals, sector trends, and market conditions
 - Respond ONLY with valid JSON. Do not include any text before or after the JSON.
 
 JSON format (required):
@@ -248,7 +314,7 @@ JSON format (required):
     "action": "BUY",
     "confidence": 0.75,
     "quantity_percentage": 15.5,
-    "reasoning": "Detailed explanation including key factors: technical analysis findings, news impact assessment, market sentiment, and risk considerations"
+    "reasoning": "Detailed explanation including key factors: technical analysis findings, news impact assessment, market sentiment, company fundamentals, and risk considerations"
 }}
 
 Make informed decisions based on the data provided. Consider both opportunity and risk in your recommendations.
@@ -328,10 +394,10 @@ Make informed decisions based on the data provided. Consider both opportunity an
             action = TradeAction(action_str)
             confidence = max(0.0, min(1.0, float(data.get('confidence', 0.5))))
             quantity_percentage = max(1.0, min(50.0, float(data.get('quantity_percentage', 5))))
-            reasoning = str(data.get('reasoning', 'AI analysis completed'))[:500]  # Limit reasoning length
+            reasoning = str(data.get('reasoning', 'AI analysis completed'))
             
             logger.info(f"🎯 AI Decision for {stock_info.symbol}: {action.value.upper()} (confidence: {confidence:.1%}, quantity: {quantity_percentage}%)")
-            logger.info(f"💭 AI Reasoning: {reasoning[:100]}...")
+            logger.info(f"💭 AI Reasoning: {reasoning}...")
             
             # Calculate actual quantity based on percentage
             # For simplicity, assume $10,000 position size for BUY orders

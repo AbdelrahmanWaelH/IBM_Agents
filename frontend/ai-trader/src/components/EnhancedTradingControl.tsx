@@ -649,7 +649,7 @@ const EnhancedTradingControl: React.FC = () => {
                         </div>
                       </div>
                       <div className="text-sm text-gray-600">
-                        {decision.reasoning?.substring(0, 100)}...
+                        {decision.reasoning}
                       </div>
                       <div className="text-xs text-gray-400 mt-2">
                         {formatTime(decision.created_at)}

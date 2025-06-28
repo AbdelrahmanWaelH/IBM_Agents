@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { tradingApi } from '../services/api';
+import { tradingApi, automatedTradingApi } from '../services/api';
 import { 
   Plus, 
   Settings, 
@@ -18,10 +18,10 @@ import {
   RefreshCw
 } from 'lucide-react';
 
-interface SymbolData {
-  symbols: string[];
-  count: number;
-}
+// interface SymbolData {
+//   symbols: string[];
+//   count: number;
+// }
 
 interface AIRecommendation {
   symbol: string;
@@ -59,13 +59,8 @@ const SymbolManager: React.FC = () => {
 
   const loadSymbols = async () => {
     try {
-      const response = await fetch('/api/automated-trading/symbols');
-      if (response.ok) {
-        const data: SymbolData = await response.json();
-        setSymbols(data.symbols);
-      } else {
-        console.error('Failed to load symbols');
-      }
+      const data = await automatedTradingApi.getSymbols();
+      setSymbols(data.symbols);
     } catch (error) {
       console.error('Error loading symbols:', error);
     }
@@ -73,11 +68,8 @@ const SymbolManager: React.FC = () => {
 
   const checkEngineStatus = async () => {
     try {
-      const response = await fetch('/api/automated-trading/status');
-      if (response.ok) {
-        const data = await response.json();
-        setIsEngineRunning(data.is_running);
-      }
+      const data = await automatedTradingApi.getStatus();
+      setIsEngineRunning(data.is_running);
     } catch (error) {
       console.error('Error checking engine status:', error);
     }
@@ -116,25 +108,13 @@ const SymbolManager: React.FC = () => {
         return;
       }
 
-      const response = await fetch('/api/automated-trading/symbols/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ symbol })
-      });
-      
-      if (response.ok) {
-        const data: SymbolData = await response.json();
-        setSymbols(data.symbols);
-        setNewSymbol('');
-        setSuccess(`Symbol ${symbol} added successfully`);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to add symbol');
-      }
-    } catch (error) {
-      setError('Error adding symbol');
+      const data = await automatedTradingApi.addSymbol(symbol);
+      setSymbols(data.symbols);
+      setNewSymbol('');
+      setSuccess(`Symbol ${symbol} added successfully`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error adding symbol';
+      setError(errorMessage);
       console.error('Error adding symbol:', error);
     } finally {
       setLoading(false);
@@ -147,20 +127,12 @@ const SymbolManager: React.FC = () => {
     setSuccess(null);
     
     try {
-      const response = await fetch(`/api/automated-trading/symbols/${symbol}`, {
-        method: 'DELETE',
-      });
-      
-      if (response.ok) {
-        const data: SymbolData = await response.json();
-        setSymbols(data.symbols);
-        setSuccess(`Symbol ${symbol} removed successfully`);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to remove symbol');
-      }
-    } catch (error) {
-      setError('Error removing symbol');
+      const data = await automatedTradingApi.removeSymbol(symbol);
+      setSymbols(data.symbols);
+      setSuccess(`Symbol ${symbol} removed successfully`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error removing symbol';
+      setError(errorMessage);
       console.error('Error removing symbol:', error);
     } finally {
       setLoading(false);
@@ -170,23 +142,15 @@ const SymbolManager: React.FC = () => {
   const getAIRecommendations = async () => {
     setLoading(true);
     setError(null);
-    setSuccess(null);
+    setSuccess('🤖 AI is analyzing stocks using company names for better news coverage. This may take 1-2 minutes...');
     
     try {
-      const response = await fetch('/api/automated-trading/ai-recommend-stocks?count=8', {
-        method: 'POST',
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAiRecommendations(data.recommended_stocks);
-        setSuccess(`AI analyzed stocks and found ${data.recommended_stocks.length} good opportunities`);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to get AI recommendations');
-      }
-    } catch (error) {
-      setError('Error getting AI recommendations');
+      const data = await automatedTradingApi.getAIRecommendations(8);
+      setAiRecommendations(data.recommended_stocks);
+      setSuccess(`✅ AI analyzed stocks and found ${data.recommended_stocks.length} good opportunities`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error getting AI recommendations';
+      setError(`❌ ${errorMessage}. Please ensure the backend is running and try again.`);
       console.error('Error getting AI recommendations:', error);
     } finally {
       setLoading(false);
@@ -221,26 +185,14 @@ const SymbolManager: React.FC = () => {
     for (const symbol of Array.from(selectedRecommendations)) {
       try {
         if (!symbols.includes(symbol)) {
-          const response = await fetch('/api/automated-trading/symbols/add', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ symbol })
-          });
-          
-          if (response.ok) {
-            addedSymbols.push(symbol);
-          } else {
-            const errorData = await response.json();
-            errors.push(`${symbol}: ${errorData.detail}`);
-          }
+          await automatedTradingApi.addSymbol(symbol);
+          addedSymbols.push(symbol);
         } else {
           errors.push(`${symbol}: Already in list`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${symbol}: Error adding due to ${message}`);
+        errors.push(`${symbol}: Error adding - ${message}`);
       }
     }
 
