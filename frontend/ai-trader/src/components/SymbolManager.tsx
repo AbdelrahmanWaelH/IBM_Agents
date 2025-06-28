@@ -39,6 +39,7 @@ const SymbolManager: React.FC = () => {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [newSymbol, setNewSymbol] = useState('');
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true); // Add initial loading state
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isEngineRunning, setIsEngineRunning] = useState(false);
@@ -66,6 +67,9 @@ const SymbolManager: React.FC = () => {
       setSymbols(data.symbols);
     } catch (error) {
       console.error('Error loading symbols:', error);
+      setError('Failed to load symbols');
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -289,35 +293,57 @@ const SymbolManager: React.FC = () => {
 
               {/* Predefined Categories */}
               <div className="space-y-4">
-                {Object.entries(predefinedSymbols).map(([category, categorySymbols]) => (
-                  <div key={category}>
-                    <h4 className="font-semibold mb-2">{category}</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {categorySymbols.map((symbol) => (
-                        <Button
-                          key={symbol}
-                          variant={symbols.includes(symbol) ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => symbols.includes(symbol) ? removeSymbol(symbol) : addSymbol(symbol)}
-                          disabled={isEngineRunning || loading}
-                          className="flex items-center gap-1"
-                        >
-                          {symbols.includes(symbol) ? (
-                            <>
-                              <CheckCircle className="h-3 w-3" />
-                              {symbol}
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="h-3 w-3" />
-                              {symbol}
-                            </>
-                          )}
-                        </Button>
-                      ))}
-                    </div>
+                {initialLoading ? (
+                  // Loading skeleton
+                  <div className="space-y-4">
+                    {Object.keys(predefinedSymbols).map((category) => (
+                      <div key={category}>
+                        <h4 className="font-semibold mb-2">{category}</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {predefinedSymbols[category as keyof typeof predefinedSymbols].map((symbol) => (
+                            <div
+                              key={symbol}
+                              className="h-8 px-3 rounded-md bg-gray-200 animate-pulse flex items-center"
+                            >
+                              <span className="text-transparent">{symbol}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                ) : (
+                  // Actual symbols with highlighting
+                  Object.entries(predefinedSymbols).map(([category, categorySymbols]) => (
+                    <div key={category}>
+                      <h4 className="font-semibold mb-2">{category}</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {categorySymbols.map((symbol) => (
+                          <Button
+                            key={symbol}
+                            variant={symbols.includes(symbol) ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => symbols.includes(symbol) ? removeSymbol(symbol) : addSymbol(symbol)}
+                            disabled={isEngineRunning || loading}
+                            className="flex items-center gap-1"
+                          >
+                            {symbols.includes(symbol) ? (
+                              <>
+                                <CheckCircle className="h-3 w-3" />
+                                {symbol}
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="h-3 w-3" />
+                                {symbol}
+                              </>
+                            )}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </TabsContent>
 

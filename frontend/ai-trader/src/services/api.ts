@@ -117,6 +117,30 @@ export interface ResetResponse {
   message: string;
 }
 
+export interface Company {
+  symbol: string;
+  company_name: string;
+  short_name: string;
+  sector?: string;
+  industry?: string;
+  exchange?: string;
+  source: string;
+}
+
+export interface CompanySearchResponse {
+  query: string;
+  results: Company[];
+  total_found: number;
+}
+
+export interface SymbolResolutionResponse {
+  query: string;
+  symbol: string | null;
+  is_symbol: boolean;
+  resolved: boolean;
+  error?: string;
+}
+
 // Trading API
 export const tradingApi = {
   getStock: async (symbol: string): Promise<StockInfo> => {
@@ -540,6 +564,39 @@ export const onboardingApi = {
       return response.data;
     } catch (error) {
       console.error('Error fetching preferences:', error);
+      throw error;
+    }
+  },
+};
+
+// Company Search API
+export const companySearchApi = {
+  searchCompanies: async (query: string, limit: number = 10): Promise<CompanySearchResponse> => {
+    try {
+      const response = await api.get(`/companies/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error searching companies:', error);
+      throw error;
+    }
+  },
+
+  resolveSymbol: async (query: string, searchType: 'symbol' | 'company' = 'company'): Promise<SymbolResolutionResponse> => {
+    try {
+      const response = await api.get(`/companies/resolve-symbol?query=${encodeURIComponent(query)}&search_type=${searchType}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error resolving symbol:', error);
+      throw error;
+    }
+  },
+
+  getPopularCompanies: async (): Promise<{ popular_companies: Company[] }> => {
+    try {
+      const response = await api.get('/companies/popular');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching popular companies:', error);
       throw error;
     }
   },

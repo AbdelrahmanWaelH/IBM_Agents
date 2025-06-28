@@ -476,3 +476,66 @@ async def ai_add_recommended_stocks():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to add AI recommendations: {str(e)}")
+
+@router.post("/execute-enhanced-analysis")
+async def execute_enhanced_manual_analysis(symbol: str = Query(..., description="Stock symbol to analyze")):
+    """Execute enhanced manual analysis with comprehensive AI reasoning"""
+    if not symbol or not symbol.strip():
+        raise HTTPException(status_code=400, detail="Symbol is required")
+    
+    symbol = symbol.upper().strip()
+    
+    try:
+        logger.info(f"🎯 Starting enhanced manual analysis for {symbol}")
+        
+        # Get portfolio context
+        portfolio = await trading_engine.portfolio_service.get_portfolio()
+        portfolio_context = {
+            "cash_balance": portfolio.cash_balance,
+            "total_value": portfolio.total_value,
+            "holdings": portfolio.holdings
+        }
+        
+        # Use the enhanced AI service for comprehensive analysis
+        decision = await trading_engine.ai_service.analyze_opportunity_comprehensive(symbol, portfolio_context)
+        
+        # Get the full analysis with markdown formatting
+        analysis_data = await trading_engine.ai_service.get_analysis_with_markdown(symbol, decision.decision_id)
+        
+        logger.info(f"✅ Enhanced manual analysis completed for {symbol}")
+        
+        return {
+            "symbol": symbol,
+            "decision": {
+                "action": decision.action.value,
+                "confidence": decision.confidence,
+                "quantity": decision.quantity,
+                "suggested_price": decision.suggested_price,
+                "reasoning": decision.reasoning,  # Full reasoning
+                "reasoning_markdown": analysis_data.get("reasoning_markdown", decision.reasoning)
+            },
+            "analysis_enhanced": True,
+            "timestamp": datetime.now().isoformat(),
+            "decision_id": decision.decision_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Enhanced manual analysis failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Enhanced analysis failed: {str(e)}")
+
+@router.get("/analysis/{symbol}/markdown")
+async def get_analysis_markdown(symbol: str, decision_id: int = None):
+    """Get AI analysis with properly formatted markdown"""
+    try:
+        analysis = await trading_engine.ai_service.get_analysis_with_markdown(symbol, decision_id)
+        
+        if "error" in analysis:
+            raise HTTPException(status_code=404, detail=analysis["error"])
+        
+        return analysis
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting markdown analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

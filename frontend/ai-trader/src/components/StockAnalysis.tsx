@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Label } from './ui/label';
 import { TrendingUp, TrendingDown, Minus, Brain, AlertCircle, CheckCircle, Calculator } from 'lucide-react';
 import { tradingApi, type StockInfo, type TradeDecision, type TradeValidationResponse } from '../services/api';
+import ReactMarkdown from 'react-markdown';
 
 interface StockAnalysisProps {
   stock: StockInfo;
@@ -188,7 +189,25 @@ const StockAnalysis: React.FC<StockAnalysisProps> = ({ stock, decision, onExecut
 
           <div>
             <p className="text-sm text-gray-600 mb-2">AI Reasoning</p>
-            <p className="text-sm bg-gray-50 p-3 rounded-lg">{decision.reasoning}</p>
+            <div className="text-sm bg-gray-50 p-4 rounded-lg border max-w-none overflow-auto">
+              <ReactMarkdown
+                components={{
+                  h1: ({ children }) => <h1 className="text-lg font-bold mb-3 text-gray-800 border-b pb-1">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-base font-semibold mb-2 text-blue-700 mt-4 flex items-center">
+                    <span className="mr-2">📊</span>{children}
+                  </h2>,
+                  h3: ({ children }) => <h3 className="text-sm font-medium mb-2 text-gray-600 mt-3">{children}</h3>,
+                  p: ({ children }) => <p className="mb-3 text-gray-700 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="mb-3 ml-4 space-y-1">{children}</ul>,
+                  li: ({ children }) => <li className="text-gray-700 list-disc leading-relaxed">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold text-gray-800">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-gray-600">{children}</em>,
+                  code: ({ children }) => <code className="bg-gray-200 px-2 py-1 rounded text-xs font-mono text-gray-800">{children}</code>
+                }}
+              >
+                {decision.reasoning}
+              </ReactMarkdown>
+            </div>
           </div>
 
           {decision.action !== 'hold' && (

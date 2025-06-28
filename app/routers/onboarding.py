@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
-from services.ai_service import AIService
+from services.ai_service import AITradingService
 from database import get_db, UserPreferences
 from sqlalchemy.orm import Session
 import json
@@ -42,13 +42,16 @@ You are an AI financial advisor helping new users set up their investment prefer
 6. Experience level (beginner, intermediate, advanced)
 7. Automated trading preference (none, analysis only, full control)
 
-IMPORTANT INSTRUCTIONS:
+CRITICAL INSTRUCTIONS:
 - Ask questions one at a time to make the conversation natural and engaging
 - Be friendly, professional, and educational
 - Use simple and concise English without technical jargon
 - Only respond as the Assistant, do not simulate user responses
 - Do not continue conversations or role-play multiple turns
 - Give ONE response to the user's question/statement
+- Do NOT repeat any previous responses or questions
+- Do NOT echo or repeat the user's message
+- Provide only new, unique content in your response
 - When you have gathered all 7 pieces of information, respond with "ONBOARDING_COMPLETE" at the end
 - When given a message from the user that is not within the scope of investing or their preferences, you should ask them politely to stay on topic. You can say "We are here to discuss investments, please remain on topic". 
 
@@ -64,7 +67,7 @@ async def chat_with_onboarding_agent(
     ai_service = None
     try:
         # Initialize AI service
-        ai_service = AIService()
+        ai_service = AITradingService()
         
         # Build conversation context
         messages = [{"role": "system", "content": ONBOARDING_SYSTEM_PROMPT}]
@@ -78,6 +81,15 @@ async def chat_with_onboarding_agent(
         
         # Get AI response
         response = await ai_service.get_chat_completion(messages)
+        
+        # Additional cleaning to prevent duplications
+        response = response.strip()
+        
+        # Remove any markdown headers that might indicate response sections
+        if response.startswith("### Response:"):
+            response = response.replace("### Response:", "").strip()
+        if response.startswith("Response:"):
+            response = response.replace("Response:", "").strip()
         
         # Check if onboarding is complete
         is_complete = "ONBOARDING_COMPLETE" in response

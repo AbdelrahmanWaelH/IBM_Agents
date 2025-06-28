@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import SymbolManager from './SymbolManager';
 import { automatedTradingApi, portfolioApi, type Portfolio } from '../services/api';
+import { useTradingWebSocket } from '../hooks/useWebSocket';
 import { 
   Bot, 
   Play, 
@@ -21,7 +22,9 @@ import {
   Settings,
   Brain,
   Shield,
-  Target
+  Target,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 interface EngineStatus {
@@ -75,6 +78,106 @@ const EnhancedTradingControl: React.FC = () => {
   const [manualSymbol, setManualSymbol] = useState('');
   const [manualAnalysisLoading, setManualAnalysisLoading] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState([75]);
+  const [newUpdatesCount, setNewUpdatesCount] = useState(0);
+
+  // WebSocket integration for real-time updates
+  const {
+    isConnected: wsConnected,
+    connectionState,
+    aiDecisions,
+    tradeExecutions,
+    engineStatus: wsEngineStatus,
+    portfolioUpdates
+  } = useTradingWebSocket();
+
+  // Update local state when websocket data arrives
+  useEffect(() => {
+    if (wsEngineStatus) {
+      // Map websocket engine status to local engine status format
+      setEngineStatus(prev => ({
+        ...prev,
+        is_running: wsEngineStatus.is_running,
+        trading_mode: prev?.trading_mode || 'analysis_only',
+        daily_trade_count: prev?.daily_trade_count || 0,
+        max_daily_trades: prev?.max_daily_trades || 10,
+        monitored_symbols: prev?.monitored_symbols || [],
+        analysis_interval_seconds: prev?.analysis_interval_seconds || 300,
+        min_confidence_threshold: prev?.min_confidence_threshold || 0.75,
+        last_trade_reset: wsEngineStatus.last_run || prev?.last_trade_reset || null
+      }));
+    }
+  }, [wsEngineStatus]);
+
+  useEffect(() => {
+    if (portfolioUpdates) {
+      // Convert portfolio update format to match expected Portfolio type
+      const convertedPortfolio: Portfolio = {
+        ...portfolioUpdates,
+        holdings: portfolioUpdates.holdings.map(holding => ({
+          symbol: holding.symbol,
+          quantity: holding.quantity,
+          avg_price: holding.average_price,
+          current_price: holding.current_price,
+          value: holding.market_value,
+          profit_loss: holding.profit_loss
+        }))
+      };
+      setPortfolio(convertedPortfolio);
+    }
+  }, [portfolioUpdates]);
+
+  // Update recent activity with real-time data
+  useEffect(() => {
+    if (aiDecisions.length > 0 || tradeExecutions.length > 0) {
+      setRecentActivity(prev => {
+        if (!prev) return null;
+        
+        // Convert websocket decision format to expected format
+        const convertedDecisions = aiDecisions.map(decision => ({
+          symbol: decision.symbol,
+          action: decision.action,
+          confidence: decision.confidence,
+          reasoning: decision.reasoning,
+          created_at: decision.timestamp
+        }));
+
+        // Convert websocket trade format to expected format
+        const convertedTrades = tradeExecutions.map(trade => ({
+          symbol: trade.symbol,
+          action: trade.action,
+          quantity: trade.quantity,
+          price: trade.price,
+          timestamp: trade.timestamp
+        }));
+
+        // Check if there are new updates
+        const hasNewDecisions = convertedDecisions.length > prev.recent_decisions.length;
+        const hasNewTrades = convertedTrades.length > prev.recent_trades_24h.length;
+        
+        if (hasNewDecisions || hasNewTrades) {
+          setNewUpdatesCount(prev => prev + 1);
+          // Show success message for new activity
+          setSuccess(
+            hasNewDecisions && hasNewTrades 
+              ? 'New AI decision and trade executed!'
+              : hasNewDecisions 
+                ? 'New AI trading decision received!'
+                : 'New trade executed!'
+          );
+          // Clear success message after 5 seconds
+          setTimeout(() => setSuccess(null), 5000);
+        }
+
+        return {
+          ...prev,
+          recent_decisions: convertedDecisions.slice(0, 10),
+          recent_trades_24h: convertedTrades.slice(0, 10),
+          total_decisions_today: prev.total_decisions_today + (hasNewDecisions ? 1 : 0),
+          total_trades_today: prev.total_trades_today + (hasNewTrades ? 1 : 0)
+        };
+      });
+    }
+  }, [aiDecisions, tradeExecutions]);
   const loadEngineStatus = useCallback(async () => {
     try {
       const data = await automatedTradingApi.getStatus();
@@ -235,6 +338,17 @@ const EnhancedTradingControl: React.FC = () => {
         <div className="flex items-center gap-2">
           <Bot className="h-6 w-6 text-blue-600" />
           <h2 className="text-2xl font-bold">AI Trading Engine</h2>
+          {/* WebSocket Status Indicator */}
+          <div className="flex items-center gap-1" title={wsConnected ? "Connected to real-time updates" : `Disconnected (${connectionState})`}>
+            {wsConnected ? (
+              <Wifi className="h-4 w-4 text-green-500" />
+            ) : (
+              <WifiOff className="h-4 w-4 text-red-500" />
+            )}
+            <span className="text-xs text-gray-500">
+              {wsConnected ? 'Live' : 'Offline'}
+            </span>
+          </div>
         </div>
         <Button onClick={loadAllData} variant="outline">
           <RefreshCw className="h-4 w-4 mr-2" />
@@ -624,7 +738,14 @@ const EnhancedTradingControl: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Recent AI Decisions</CardTitle>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  Recent AI Decisions
+                  {wsConnected && newUpdatesCount > 0 && (
+                    <Badge variant="secondary" className="text-xs animate-pulse">
+                      Live
+                    </Badge>
+                  )}
+                </CardTitle>
                 <CardDescription>Latest AI trading recommendations and analysis</CardDescription>
               </CardHeader>
               <CardContent>
@@ -666,7 +787,14 @@ const EnhancedTradingControl: React.FC = () => {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Recent Trades (24h)</CardTitle>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  Recent Trades (24h)
+                  {wsConnected && newUpdatesCount > 0 && (
+                    <Badge variant="secondary" className="text-xs animate-pulse">
+                      Live
+                    </Badge>
+                  )}
+                </CardTitle>
                 <CardDescription>Executed trades in the last 24 hours</CardDescription>
               </CardHeader>
               <CardContent>

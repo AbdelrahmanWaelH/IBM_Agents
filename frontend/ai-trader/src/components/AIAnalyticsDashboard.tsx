@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -179,7 +180,9 @@ const AIAnalyticsDashboard: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    <p className="text-sm text-gray-600">{decision.reasoning}</p>
+                    <div className="text-sm text-gray-600 prose prose-sm max-w-none">
+                      <ReactMarkdown>{decision.reasoning}</ReactMarkdown>
+                    </div>
                     <div className="text-xs text-gray-400">
                       Created: {new Date(decision.created_at).toLocaleString()}
                     </div>

@@ -8,6 +8,7 @@ import logging
 import yfinance as yf
 import time
 import re
+import asyncio
 from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum, TradeActionEnum
 from datetime import datetime
 
@@ -66,7 +67,6 @@ class AITradingService:
         try:
             # Extract just the numeric project ID
             project_id = settings.IBM_PROJECT_ID.split(' - ')[0].strip()
-            
             return WatsonxLLM(
                 model_id=settings.IBM_BASE_MODEL,
                 url=settings.IBM_BASE_URL,
@@ -74,9 +74,11 @@ class AITradingService:
                 project_id=project_id,
                 params={
                     "temperature": 0.3,
-                    "max_new_tokens": 512,
+                    "max_new_tokens": 16384,  # Significantly increased for comprehensive reasoning
                     "top_p": 0.9,
-                    "top_k": 50
+                    "top_k": 50,
+                    "repetition_penalty": 1.1,
+                    "stop_sequences": ["User:", "Human:", "Assistant:"]
                 }
             )
         except Exception as e:
@@ -87,7 +89,7 @@ class AITradingService:
                                 stock_info: StockInfo, 
                                 news_items: List[NewsItem],
                                 portfolio_context: Dict = None) -> TradeDecision:
-        """Analyze stock and news data to make trading decision"""
+        """Analyze stock and news data to make trading decision with enhanced concurrency"""
         
         # Validate input data
         if not stock_info:
@@ -99,7 +101,41 @@ class AITradingService:
             raise ValueError(f"Invalid stock price data for {stock_info.symbol}")
         
         try:
-            # Store stock analysis in database
+            # Use asyncio.gather for concurrent operations
+            logger.info(f"🚀 Starting enhanced concurrent analysis for {stock_info.symbol}")
+            
+            # Run database operations and AI analysis concurrently
+            store_stock_task = asyncio.create_task(self._store_stock_analysis(stock_info))
+            store_news_task = asyncio.create_task(self._store_news_analysis(stock_info.symbol, news_items))
+            ai_decision_task = asyncio.create_task(self._get_ai_decision(stock_info, news_items, portfolio_context))
+            
+            # Wait for all tasks to complete
+            stock_analysis, news_analyses, decision = await asyncio.gather(
+                store_stock_task, store_news_task, ai_decision_task
+            )
+            
+            # Store AI decision in database
+            ai_decision = await self._store_ai_decision(decision, stock_info, portfolio_context)
+            
+            # Link stock analysis to AI decision
+            if stock_analysis and ai_decision:
+                stock_analysis.ai_decision_id = ai_decision.id
+                self.db.commit()
+            
+            # Update decision with database ID
+            decision.decision_id = ai_decision.id if ai_decision else None
+            
+            logger.info(f"✅ Enhanced concurrent analysis completed for {stock_info.symbol}")
+            return decision
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced AI analysis: {e}")
+            self.db.rollback()
+            raise RuntimeError(f"Failed to complete enhanced AI analysis for {stock_info.symbol}: {e}")
+    
+    async def _store_stock_analysis(self, stock_info: StockInfo):
+        """Store stock analysis in database asynchronously"""
+        try:
             stock_analysis = StockAnalysis(
                 symbol=stock_info.symbol,
                 current_price=stock_info.current_price,
@@ -109,15 +145,30 @@ class AITradingService:
             )
             self.db.add(stock_analysis)
             self.db.flush()  # Get the ID
+            logger.info(f"📊 Stored stock analysis for {stock_info.symbol}")
+            return stock_analysis
+        except Exception as e:
+            logger.error(f"Error storing stock analysis: {e}")
+            return None
+    
+    async def _store_news_analysis(self, symbol: str, news_items: List[NewsItem]):
+        """Store news analysis in database asynchronously"""
+        try:
+            news_analyses = []
+            logger.info(f"📰 Analyzing {len(news_items)} news articles for {symbol}")
             
-            # Store news analysis and log the news being analyzed
-            logger.info(f"📰 Analyzing {len(news_items)} news articles for {stock_info.symbol}")
-            for idx, news in enumerate(news_items, 1):
+            # Use concurrent sentiment analysis for news items
+            sentiment_tasks = []
+            for news in news_items:
+                task = asyncio.create_task(self._analyze_news_sentiment_async(news))
+                sentiment_tasks.append((news, task))
+            
+            for idx, (news, sentiment_task) in enumerate(sentiment_tasks, 1):
                 logger.info(f"📄 News {idx}: {news.title[:100]}... from {news.source}")
                 
-                sentiment = self._analyze_news_sentiment(news)
+                sentiment = await sentiment_task
                 news_analysis = NewsAnalysis(
-                    symbol=stock_info.symbol,
+                    symbol=symbol,
                     title=news.title,
                     description=news.description,
                     url=news.url,
@@ -126,19 +177,25 @@ class AITradingService:
                     published_at=datetime.fromisoformat(news.published_at.replace('Z', '+00:00')) if isinstance(news.published_at, str) else news.published_at
                 )
                 self.db.add(news_analysis)
+                news_analyses.append(news_analysis)
                 logger.info(f"📊 News sentiment for '{news.title[:50]}...': {sentiment.value if sentiment else 'neutral'}")
             
             if not news_items:
-                logger.warning(f"⚠️ No news articles available for {stock_info.symbol} - analysis will be based on stock data only")
+                logger.warning(f"⚠️ No news articles available for {symbol} - analysis will be based on stock data only")
             
+            return news_analyses
+        except Exception as e:
+            logger.error(f"Error storing news analysis: {e}")
+            return []
+    
+    async def _store_ai_decision(self, decision: TradeDecision, stock_info: StockInfo, portfolio_context: Dict = None):
+        """Store AI decision in database asynchronously"""
+        try:
             # Get AI decision - require AI for all decisions
             if not self.llm:
                 logger.error("AI LLM is not available - cannot make trading decisions without AI")
                 raise RuntimeError("AI trading service is unavailable")
             
-            decision = await self._get_ai_decision(stock_info, news_items, portfolio_context)
-            
-            # Store AI decision in database
             # Map TradeAction to TradeActionEnum
             action_mapping = {
                 TradeAction.BUY: TradeActionEnum.BUY,
@@ -151,28 +208,20 @@ class AITradingService:
                 action=action_mapping.get(decision.action, TradeActionEnum.HOLD),
                 quantity=decision.quantity,
                 confidence=decision.confidence,
-                reasoning=decision.reasoning,
+                reasoning=decision.reasoning,  # Full reasoning without truncation
                 suggested_price=decision.suggested_price,
                 stock_price=stock_info.current_price,
                 stock_change_percent=stock_info.change_percent,
                 portfolio_context=json.dumps(portfolio_context) if portfolio_context else None
             )
             self.db.add(ai_decision)
+            self.db.flush()  # Get the ID
             
-            # Link stock analysis to AI decision
-            stock_analysis.ai_decision_id = ai_decision.id
-            
-            self.db.commit()
-            
-            # Update decision with database ID
-            decision.decision_id = ai_decision.id
-            
-            return decision
-            
+            logger.info(f"💾 Stored AI decision for {stock_info.symbol}: {decision.action.value}")
+            return ai_decision
         except Exception as e:
-            logger.error(f"Error in AI analysis: {e}")
-            self.db.rollback()
-            raise RuntimeError(f"Failed to complete AI analysis for {stock_info.symbol}: {e}")
+            logger.error(f"Error storing AI decision: {e}")
+            return None
     
     async def _get_ai_decision(self, 
                               stock_info: StockInfo, 
@@ -191,8 +240,8 @@ class AITradingService:
             logger.error(f"Error in AI decision: {e}")
             raise RuntimeError(f"AI decision failed: {e}")
     
-    def _analyze_news_sentiment(self, news: NewsItem) -> SentimentEnum:
-        """Use AI to analyze news sentiment instead of simple heuristics"""
+    async def _analyze_news_sentiment_async(self, news: NewsItem) -> SentimentEnum:
+        """Async version of news sentiment analysis for concurrent processing"""
         if not self.llm:
             logger.warning("LLM not available for sentiment analysis, defaulting to neutral")
             return SentimentEnum.NEUTRAL
@@ -213,7 +262,9 @@ Consider:
 Respond with ONLY one word: positive, negative, or neutral
 """
             
-            response = self.llm.invoke(sentiment_prompt)
+            # Run LLM invocation in an executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.llm.invoke(sentiment_prompt))
             sentiment_text = response.strip().lower()
             
             logger.info(f"🤖 AI sentiment analysis for '{news.title[:50]}...': {sentiment_text}")
@@ -226,7 +277,7 @@ Respond with ONLY one word: positive, negative, or neutral
                 return SentimentEnum.NEUTRAL
                 
         except Exception as e:
-            logger.error(f"Error in AI sentiment analysis: {e}")
+            logger.error(f"Error in async AI sentiment analysis: {e}")
             return SentimentEnum.NEUTRAL
     
     def _create_analysis_prompt(self, 
@@ -294,33 +345,36 @@ NEWS SENTIMENT & MARKET IMPACT:
 {portfolio_text}
 
 INSTRUCTIONS:
-1. Analyze {company_name}'s current technical indicators and price trends
-2. **CRITICAL**: Thoroughly evaluate the sentiment and impact of recent news on {company_name} - this is essential for trading decisions
-3. Consider market conditions and volatility affecting {company_name}
-4. Assess risk-reward potential based on available data and company fundamentals
-5. Make a trading recommendation (BUY, SELL, or HOLD)
-6. Suggest a reasonable trade size based on current market conditions and risk assessment
-7. Provide confidence level (0.0 to 1.0) based on the strength of your analysis
-8. Give detailed reasoning for your decision including key factors that influenced it
+1. **Technical Analysis**: Analyze {company_name}'s current technical indicators and price trends
+2. **News Impact Assessment**: Thoroughly evaluate the sentiment and impact of recent news on {company_name} - this is essential for trading decisions
+3. **Market Context**: Consider market conditions and volatility affecting {company_name}
+4. **Risk Assessment**: Assess risk-reward potential based on available data and company fundamentals
+5. **Trading Decision**: Make a trading recommendation (BUY, SELL, or HOLD)
+6. **Position Sizing**: Suggest a reasonable trade size based on current market conditions and risk assessment
+7. **Confidence Rating**: Provide confidence level (0.0 to 1.0) based on the strength of your analysis
+8. **Detailed Reasoning**: Give comprehensive reasoning for your decision including key factors that influenced it - format this as **structured markdown** with clear sections
 
-IMPORTANT: 
+CRITICAL REQUIREMENTS: 
 - Base your analysis ONLY on the provided data
 - **NEWS ANALYSIS IS CRITICAL**: Pay special attention to news sentiment and its direct impact on stock performance
 - Do not use predetermined rules or percentages
 - Consider the news sentiment and its relevance to the stock price movement
 - Factor in company fundamentals, sector trends, and market conditions
 - If no news is available, note this limitation in your reasoning
+- **Format your reasoning as structured markdown with clear sections and headers**
+- **Include comprehensive analysis without truncation - be thorough and detailed**
+- **Use proper markdown formatting with headers (##), bullet points (*), and emphasis (**bold**)**
 - Respond ONLY with valid JSON. Do not include any text before or after the JSON.
 
 JSON format (required):
 {{
-    "action": "BUY",
+    "action": "BUY|SELL|HOLD",
     "confidence": 0.75,
     "quantity_percentage": 15.5,
-    "reasoning": "Detailed explanation including key factors: technical analysis findings, news impact assessment, market sentiment, company fundamentals, and risk considerations"
+    "reasoning": "## 📊 Technical Analysis\\n\\n**Price Action**: [Detailed analysis]\\n**Volume Analysis**: [Volume patterns]\\n**Support/Resistance**: [Key levels]\\n\\n## 📰 News Impact Assessment\\n\\n**Sentiment Summary**: [Overall news sentiment]\\n**Key Headlines**: [Important news items]\\n**Market Impact**: [How news affects stock]\\n\\n## 🌍 Market Context\\n\\n**Sector Performance**: [Sector analysis]\\n**Market Conditions**: [Overall market state]\\n**Economic Factors**: [Relevant economic indicators]\\n\\n## ⚖️ Risk Assessment\\n\\n**Risk Factors**: [Potential risks]\\n**Opportunity Analysis**: [Potential rewards]\\n**Risk/Reward Ratio**: [Assessment]\\n\\n## 🎯 Trading Decision Rationale\\n\\n**Primary Factors**: [Key decision drivers]\\n**Supporting Evidence**: [Additional factors]\\n**Confidence Justification**: [Why this confidence level]\\n**Position Sizing Logic**: [Rationale for position size]"
 }}
 
-Make informed decisions based on the data provided. Consider both opportunity and risk in your recommendations.
+Make informed decisions based on the data provided. Consider both opportunity and risk in your recommendations. Provide thorough, comprehensive analysis without any truncation or abbreviation.
 """
         return prompt
     
@@ -402,10 +456,10 @@ Make informed decisions based on the data provided. Consider both opportunity an
             action = TradeAction(action_str)
             confidence = max(0.0, min(1.0, float(data.get('confidence', 0.5))))
             quantity_percentage = max(1.0, min(50.0, float(data.get('quantity_percentage', 5))))
-            reasoning = str(data.get('reasoning', 'AI analysis completed'))[:1000]  # Limit length
+            reasoning = str(data.get('reasoning', 'AI analysis completed'))  # Remove length limit
             
             logger.info(f"🎯 AI Decision for {stock_info.symbol}: {action.value.upper()} (confidence: {confidence:.1%}, quantity: {quantity_percentage}%)")
-            logger.info(f"💭 AI Reasoning: {reasoning[:100]}...")
+            logger.info(f"💭 AI Reasoning ({len(reasoning)} chars): {reasoning[:200]}...")
             
             # Calculate actual quantity based on percentage
             # For simplicity, assume $10,000 position size for BUY orders
@@ -697,23 +751,28 @@ Make informed decisions based on the data provided. Consider both opportunity an
                     prompt_parts.append(f"INSTRUCTIONS: {msg['content']}")
                     break
             
-            # Add conversation history in a structured way
+            # Add conversation history in a structured way (limit recent history to prevent repetition)
             conversation_history = []
             current_user_message = ""
             
-            for msg in messages:
+            # Only include the last few exchanges to prevent context repetition
+            recent_messages = messages[-6:] if len(messages) > 6 else messages[1:]  # Skip system message
+            
+            for msg in recent_messages:
                 if msg["role"] == "user":
                     current_user_message = msg['content']
                     conversation_history.append(f"User said: {msg['content']}")
                 elif msg["role"] == "assistant":
-                    conversation_history.append(f"You responded: {msg['content']}")
+                    # Truncate long assistant responses to prevent repetition
+                    truncated_response = msg['content'][:150] + "..." if len(msg['content']) > 150 else msg['content']
+                    conversation_history.append(f"You responded: {truncated_response}")
             
             if conversation_history:
-                prompt_parts.append("CONVERSATION SO FAR:")
+                prompt_parts.append("RECENT CONVERSATION:")
                 prompt_parts.extend(conversation_history)
             
             prompt_parts.append(f"USER'S CURRENT MESSAGE: {current_user_message}")
-            prompt_parts.append("YOUR RESPONSE (respond only as the assistant, do not continue the conversation):")
+            prompt_parts.append("YOUR RESPONSE (provide a single, new response - do not repeat previous responses):")
             
             final_prompt = "\n\n".join(prompt_parts)
             
@@ -726,7 +785,7 @@ Make informed decisions based on the data provided. Consider both opportunity an
                     logger.warning("LLM returned empty response, using fallback")
                     return self._get_fallback_chat_response(messages)
                 
-                # Clean up the response to prevent conversation continuation
+                # Clean up the response to prevent conversation continuation and repetition
                 cleaned_response = self._clean_chat_response(response.strip())
                 
                 logger.info(f"LLM chat completion successful: {cleaned_response[:100]}...")
@@ -815,7 +874,7 @@ Make informed decisions based on the data provided. Consider both opportunity an
                    "What aspects of investing are most important to you?")
 
     def _clean_chat_response(self, response: str) -> str:
-        """Clean the chat response to prevent conversation continuation"""
+        """Clean the chat response to prevent conversation continuation and remove duplicates"""
         # Split by common conversation markers and take only the first part
         stop_patterns = [
             "\n\nUser:",
@@ -823,7 +882,10 @@ Make informed decisions based on the data provided. Consider both opportunity an
             "\n\nAssistant:",
             "\nAssistant:",
             "User said:",
-            "User:"
+            "User:",
+            "### Response:",
+            "Response:",
+            "\n\nNext,"
         ]
         
         cleaned = response
@@ -834,12 +896,182 @@ Make informed decisions based on the data provided. Consider both opportunity an
         # Remove any trailing colons or conversation markers
         cleaned = cleaned.rstrip(": \n")
         
-        return cleaned.strip()
+        # Split into paragraphs and remove duplicates
+        paragraphs = [p.strip() for p in cleaned.split('\n\n') if p.strip()]
+        unique_paragraphs = []
+        
+        for paragraph in paragraphs:
+            # Check if this paragraph is similar to any previous one
+            is_duplicate = False
+            for existing in unique_paragraphs:
+                # Simple similarity check - if 80% of words are the same, consider it a duplicate
+                if self._is_similar_text(paragraph, existing, threshold=0.8):
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique_paragraphs.append(paragraph)
+        
+        # Join back and clean up
+        final_response = '\n\n'.join(unique_paragraphs)
+        
+        return final_response.strip()
+    
+    def _is_similar_text(self, text1: str, text2: str, threshold: float = 0.8) -> bool:
+        """Check if two texts are similar (for duplicate detection)"""
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return False
+        
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        similarity = intersection / union if union > 0 else 0
+        return similarity >= threshold
 
     def __del__(self):
         """Close database connection"""
         if hasattr(self, 'db'):
             self.db.close()
+    
+    async def analyze_opportunity_comprehensive(self, symbol: str, portfolio_context: Dict) -> TradeDecision:
+        """Comprehensive analysis for trading opportunities with enhanced performance"""
+        try:
+            logger.info(f"🎯 Starting comprehensive analysis for {symbol}")
+            
+            # Import services inside method to avoid circular imports
+            from services.stock_service import StockService
+            from services.news_service import NewsService
+            from services.websocket_manager import trading_ws_manager
+            
+            stock_service = StockService()
+            news_service = NewsService()
+            
+            # Run data fetching concurrently
+            stock_task = asyncio.create_task(stock_service.get_stock_info(symbol))
+            news_task = asyncio.create_task(news_service.get_stock_news(symbol, limit=10))
+            
+            stock_info, news_items = await asyncio.gather(stock_task, news_task)
+            
+            if not stock_info:
+                raise ValueError(f"Could not fetch stock information for {symbol}")
+            
+            logger.info(f"📊 Fetched data for {symbol}: Price=${stock_info.current_price:.2f}, News={len(news_items)} articles")
+            
+            # Perform AI analysis
+            decision = await self.analyze_and_decide(stock_info, news_items, portfolio_context)
+            
+            # Notify via WebSocket about the new analysis
+            await trading_ws_manager.notify_ai_decision({
+                "symbol": symbol,
+                "action": decision.action.value,
+                "confidence": decision.confidence,
+                "reasoning_preview": decision.reasoning[:200] + "..." if len(decision.reasoning) > 200 else decision.reasoning,
+                "suggested_price": decision.suggested_price,
+                "analysis_time": datetime.now().isoformat()
+            })
+            
+            logger.info(f"✅ Comprehensive analysis complete for {symbol}: {decision.action.value} ({decision.confidence:.1%})")
+            return decision
+            
+        except Exception as e:
+            logger.error(f"❌ Comprehensive analysis failed for {symbol}: {e}")
+            raise
+    
+    async def analyze_multiple_opportunities_concurrent(self, symbols: List[str], portfolio_context: Dict, max_concurrent: int = 5) -> Dict[str, TradeDecision]:
+        """Analyze multiple opportunities concurrently with rate limiting"""
+        try:
+            logger.info(f"🚀 Starting concurrent analysis of {len(symbols)} opportunities")
+            
+            # Split symbols into batches to avoid overwhelming APIs
+            results = {}
+            semaphore = asyncio.Semaphore(max_concurrent)
+            
+            async def analyze_with_semaphore(symbol: str):
+                async with semaphore:
+                    try:
+                        decision = await self.analyze_opportunity_comprehensive(symbol, portfolio_context)
+                        return symbol, decision
+                    except Exception as e:
+                        logger.error(f"Failed to analyze {symbol}: {e}")
+                        return symbol, None
+            
+            # Create tasks for all symbols
+            tasks = [analyze_with_semaphore(symbol) for symbol in symbols]
+            
+            # Execute with progress tracking
+            completed_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            successful_analyses = 0
+            for result in completed_results:
+                if isinstance(result, Exception):
+                    logger.error(f"Task failed with exception: {result}")
+                    continue
+                
+                symbol, decision = result
+                if decision:
+                    results[symbol] = decision
+                    successful_analyses += 1
+            
+            logger.info(f"✅ Concurrent analysis complete: {successful_analyses}/{len(symbols)} successful")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Concurrent analysis failed: {e}")
+            return {}
+    
+    async def get_analysis_with_markdown(self, symbol: str, decision_id: int = None) -> Dict:
+        """Get analysis with properly formatted markdown for frontend rendering"""
+        try:
+            # Get the most recent decision for the symbol if no ID provided
+            if decision_id:
+                decision = self.db.query(AIDecision).filter(AIDecision.id == decision_id).first()
+            else:
+                decision = self.db.query(AIDecision).filter(
+                    AIDecision.symbol == symbol
+                ).order_by(AIDecision.created_at.desc()).first()
+            
+            if not decision:
+                return {"error": "No analysis found"}
+            
+            # Format the reasoning as proper markdown
+            reasoning_markdown = self._format_reasoning_as_markdown(decision.reasoning)
+            
+            return {
+                "symbol": decision.symbol,
+                "action": decision.action.value,
+                "confidence": decision.confidence,
+                "quantity": decision.quantity,
+                "suggested_price": decision.suggested_price,
+                "reasoning_markdown": reasoning_markdown,
+                "analysis_time": decision.created_at.isoformat(),
+                "was_executed": decision.was_executed
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting analysis with markdown: {e}")
+            return {"error": str(e)}
+    
+    def _format_reasoning_as_markdown(self, reasoning: str) -> str:
+        """Ensure reasoning is properly formatted as markdown"""
+        try:
+            # If reasoning is already well-formatted, return as-is
+            if "##" in reasoning and "**" in reasoning:
+                return reasoning
+            
+            # Otherwise, add basic formatting
+            formatted = f"""## 📊 AI Analysis Summary
 
-# Alias for consistency with onboarding router
-AIService = AITradingService
+{reasoning}
+
+---
+*Analysis generated by AI Trading System*
+"""
+            return formatted
+            
+        except Exception as e:
+            logger.error(f"Error formatting markdown: {e}")
+            return reasoning

@@ -14,3 +14,4 @@ httpx==0.28.1
 psycopg2-binary==2.9.9
 alembic==1.13.1
 sqlalchemy==2.0.25
+asyncio==3.4.3

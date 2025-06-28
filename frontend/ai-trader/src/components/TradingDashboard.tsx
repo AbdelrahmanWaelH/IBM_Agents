@@ -16,12 +16,13 @@ import {
   Bot,
   Settings,
   MessageCircle,
-  Loader2, // <-- add this to your lucide-react imports
+  Loader2
 } from 'lucide-react';
 import { 
   portfolioApi, 
   tradingApi, 
   newsApi, 
+  companySearchApi,
   type Portfolio, 
   type StockInfo, 
   type NewsItem, 
@@ -52,6 +53,7 @@ const TradingDashboard: React.FC<TradingDashboardProps> = ({ onShowOnboarding })
     decision: TradeDecision;
   } | null>(null);
   const [newsLoaded, setNewsLoaded] = useState(false);
+  const [searchMode, setSearchMode] = useState<'symbol' | 'company'>('symbol');
 
   useEffect(() => {
     loadInitialData();
@@ -97,16 +99,39 @@ const TradingDashboard: React.FC<TradingDashboardProps> = ({ onShowOnboarding })
     
     setLoading(true);
     setError(null);
+    setCurrentAnalysis(null); // Clear previous analysis
     
     try {
+      let symbolToAnalyze = searchSymbol.trim();
+      
+      // If in company mode, resolve company name to symbol first
+      if (searchMode === 'company') {
+        const resolution = await companySearchApi.resolveSymbol(symbolToAnalyze, 'company');
+        if (resolution.resolved && resolution.symbol) {
+          symbolToAnalyze = resolution.symbol;
+        } else {
+          throw new Error(`Could not find symbol for company: ${symbolToAnalyze}`);
+        }
+      } else {
+        // In symbol mode, just verify the symbol is valid
+        const resolution = await companySearchApi.resolveSymbol(symbolToAnalyze, 'symbol');
+        if (!resolution.resolved) {
+          throw new Error(`Invalid stock symbol: ${symbolToAnalyze}`);
+        }
+        symbolToAnalyze = symbolToAnalyze.toUpperCase();
+      }
+      
       const [stockInfo, decision] = await Promise.all([
-        tradingApi.getStock(searchSymbol.toUpperCase()),
-        tradingApi.analyzeStock(searchSymbol.toUpperCase())
+        tradingApi.getStock(symbolToAnalyze),
+        tradingApi.analyzeStock(symbolToAnalyze)
       ]);
       
       setCurrentAnalysis({ stock: stockInfo, decision });
     } catch (err) {
-      setError(`Failed to analyze ${searchSymbol.toUpperCase()}`);
+      const errorMessage = searchMode === 'company' 
+        ? `Failed to analyze company "${searchSymbol}". Please check the company name and try again.`
+        : `Failed to analyze "${searchSymbol}". Please check the stock symbol and try again.`;
+      setError(errorMessage);
       console.error(err);
     } finally {
       setLoading(false);
@@ -231,23 +256,53 @@ const TradingDashboard: React.FC<TradingDashboardProps> = ({ onShowOnboarding })
         <CardHeader>
           <CardTitle className="flex items-center">
             <Bot className="h-5 w-5 mr-2" />
-            AI Stock Analysis
+            Stock Analysis
           </CardTitle>
           <CardDescription>
-            Enter a stock symbol to get AI-powered trading recommendations
+            Enter a stock symbol or company name for AI trading recommendations
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex space-x-2 mb-4">
-            <Input
-              placeholder="Enter stock symbol (e.g., AAPL, TSLA, NVDA)"
-              value={searchSymbol}
-              onChange={(e) => setSearchSymbol(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && analyzeStock()}
-            />
+            <div className="flex-1 space-y-2">
+              <div className="flex space-x-2">
+                <Button
+                  variant={searchMode === 'symbol' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setSearchMode('symbol')}
+                  className="flex-1"
+                >
+                  Stock Symbol
+                </Button>
+                <Button
+                  variant={searchMode === 'company' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setSearchMode('company')}
+                  className="flex-1"
+                >
+                  Company Name
+                </Button>
+              </div>
+              <Input
+                placeholder={searchMode === 'symbol' 
+                  ? "Enter stock symbol (e.g., AAPL, TSLA, NVDA)" 
+                  : "Enter company name (e.g., Apple, Tesla, Microsoft)"}
+                value={searchSymbol}
+                onChange={(e) => {
+                  const newValue = e.target.value;
+                  setSearchSymbol(newValue);
+                  // Clear previous analysis when user starts typing a new symbol
+                  if (newValue !== searchSymbol && currentAnalysis) {
+                    setCurrentAnalysis(null);
+                    setError(null);
+                  }
+                }}
+                onKeyPress={(e) => e.key === 'Enter' && analyzeStock()}
+              />
+            </div>
             <Button onClick={analyzeStock} disabled={loading || !searchSymbol.trim()}>
               <Search className="h-4 w-4 mr-2" />
-              Analyze
+              {loading ? 'Analyzing...' : 'Analyze'}
               {loading && (
                 <Loader2 className="h-4 w-4 ml-2 animate-spin" />
               )}
