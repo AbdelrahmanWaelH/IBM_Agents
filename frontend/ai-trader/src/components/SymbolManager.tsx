@@ -30,6 +30,9 @@ interface AIRecommendation {
   reasoning: string;
   current_price: number;
   change_percent: number;
+  market_cap?: number;
+  volume?: number;
+  news_articles_analyzed?: number;
 }
 
 const SymbolManager: React.FC = () => {
@@ -142,12 +145,12 @@ const SymbolManager: React.FC = () => {
   const getAIRecommendations = async () => {
     setLoading(true);
     setError(null);
-    setSuccess('🤖 AI is analyzing stocks using company names for better news coverage. This may take 1-2 minutes...');
+    setSuccess('🤖 AI is analyzing professional-grade stocks with news sentiment. This may take 1-2 minutes...');
     
     try {
       const data = await automatedTradingApi.getAIRecommendations(8);
       setAiRecommendations(data.recommended_stocks);
-      setSuccess(`✅ AI analyzed stocks and found ${data.recommended_stocks.length} good opportunities`);
+      setSuccess(`✅ ${data.analysis_summary || `AI analyzed stocks and found ${data.recommended_stocks.length} high-confidence opportunities`}`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Error getting AI recommendations';
       setError(`❌ ${errorMessage}. Please ensure the backend is running and try again.`);
@@ -321,8 +324,8 @@ const SymbolManager: React.FC = () => {
             <TabsContent value="ai" className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-semibold">AI Stock Recommendations</h4>
-                  <p className="text-sm text-gray-600">Let AI analyze and recommend the best stocks to trade</p>
+                  <h4 className="font-semibold">Professional AI Stock Recommendations</h4>
+                  <p className="text-sm text-gray-600">AI analyzes stocks with news sentiment like professional trading systems</p>
                 </div>
                 <Button 
                   onClick={getAIRecommendations}
@@ -333,6 +336,17 @@ const SymbolManager: React.FC = () => {
                   Get AI Recommendations
                 </Button>
               </div>
+
+              {/* Analysis Info */}
+              {aiRecommendations.length > 0 && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-blue-800 text-sm">
+                    <Zap className="h-4 w-4" />
+                    <span className="font-medium">Analysis Complete:</span>
+                    <span>News-enhanced AI analysis • Large-cap focus • 65%+ confidence threshold</span>
+                  </div>
+                </div>
+              )}
 
               {aiRecommendations.length > 0 && (
                 <div className="space-y-4">
@@ -376,19 +390,29 @@ const SymbolManager: React.FC = () => {
                                 {symbols.includes(rec.symbol) && (
                                   <Badge variant="default" className="text-xs">Already Added</Badge>
                                 )}
+                                {(rec.news_articles_analyzed ?? 0) > 0 && (
+                                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
+                                    📰 {rec.news_articles_analyzed} news
+                                  </Badge>
+                                )}
                               </div>
                               <div className="text-sm text-gray-600">
                                 ${rec.current_price.toFixed(2)} 
                                 <span className={rec.change_percent >= 0 ? 'text-green-600' : 'text-red-600'}>
                                   {rec.change_percent >= 0 ? ' +' : ' '}{rec.change_percent?.toFixed(2)}%
                                 </span>
+                                {rec.market_cap && (
+                                  <span className="text-gray-500 ml-2">
+                                    • {rec.market_cap > 1e12 ? 'Large-cap' : rec.market_cap > 1e10 ? 'Mid-cap' : 'Small-cap'}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
                           <Badge variant="outline" className={
                             rec.confidence >= 0.8 ? 'bg-green-100 text-green-800' :
-                            rec.confidence >= 0.6 ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-red-100 text-red-800'
+                            rec.confidence >= 0.7 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-blue-100 text-blue-800'
                           }>
                             {(rec.confidence * 100).toFixed(0)}%
                           </Badge>

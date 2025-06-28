@@ -472,8 +472,8 @@ export const automatedTradingApi = {
         baseURL: API_BASE_URL,
         headers: {
           'Content-Type': 'application/json',
-        },
-        timeout: 180000, // 3 minutes for AI recommendations
+        }
+        // timeout: 180000, // 3 minutes for AI recommendations
       });
       
       const response = await aiApi.post(`/automated-trading/ai-recommend-stocks?count=${count}`);

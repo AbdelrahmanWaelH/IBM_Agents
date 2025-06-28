@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from services.ai_service import AITradingService
 from services.db_portfolio_service import DatabasePortfolioService
 
@@ -30,11 +30,20 @@ async def get_ai_decisions(
     
     # Filter by days if specified
     if days:
-        cutoff_date = datetime.now() - timedelta(days=days)
-        decisions = [
-            d for d in decisions 
-            if datetime.fromisoformat(d['created_at'].replace('T', ' ').replace('Z', '')) >= cutoff_date
-        ]
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        filtered_decisions = []
+        for d in decisions:
+            try:
+                created_at_str = d['created_at']
+                decision_time = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                if decision_time.tzinfo is None:
+                    decision_time = decision_time.replace(tzinfo=timezone.utc)
+                
+                if decision_time >= cutoff_date:
+                    filtered_decisions.append(d)
+            except (ValueError, TypeError, KeyError):
+                continue
+        decisions = filtered_decisions
     
     return decisions
 
@@ -91,10 +100,10 @@ async def get_portfolio_performance():
             "holdings_count": len(portfolio.holdings),
             "holdings": [
                 {
-                    "symbol": h.symbol,
-                    "quantity": h.quantity,
-                    "average_price": h.average_price,
-                    "current_value": h.quantity * h.average_price
+                    "symbol": h.symbol if hasattr(h, 'symbol') else h.get('symbol', 'UNKNOWN'),
+                    "quantity": h.quantity if hasattr(h, 'quantity') else h.get('quantity', 0),
+                    "average_price": h.average_price if hasattr(h, 'average_price') else h.get('average_price', 0),
+                    "current_value": (h.quantity if hasattr(h, 'quantity') else h.get('quantity', 0)) * (h.average_price if hasattr(h, 'average_price') else h.get('average_price', 0))
                 }
                 for h in portfolio.holdings
             ]

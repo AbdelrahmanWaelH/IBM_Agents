@@ -9,6 +9,7 @@ class Settings:
     IBM_PROJECT_ID = os.getenv("IBM_PROJECT_ID", "demo-project-123")
     INITIAL_BUDGET = float(os.getenv("INITIAL_BUDGET", 1000000))
     NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
     IBM_BASE_URL = "https://us-south.ml.cloud.ibm.com"
     
     # Database settings

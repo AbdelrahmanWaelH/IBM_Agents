@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -43,28 +43,36 @@ const TradingDashboard: React.FC = () => {
     stock: StockInfo;
     decision: TradeDecision;
   } | null>(null);
+  const [newsLoaded, setNewsLoaded] = useState(false);
 
   useEffect(() => {
     loadInitialData();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadInitialData = async () => {
+  const loadInitialData = useCallback(async () => {
     setLoading(true);
     try {
+      // Always load portfolio, but only load news if not already loaded
+      const portfolioPromise = portfolioApi.getPortfolio();
+      const newsPromise = newsLoaded ? Promise.resolve(news) : newsApi.getFinancialNews(10);
+      
       const [portfolioData, newsData] = await Promise.all([
-        portfolioApi.getPortfolio(),
-        newsApi.getFinancialNews(10)
+        portfolioPromise,
+        newsPromise
       ]);
       
       setPortfolio(portfolioData);
-      setNews(newsData);
+      if (!newsLoaded) {
+        setNews(newsData);
+        setNewsLoaded(true);
+      }
     } catch (err) {
       setError('Failed to load initial data');
       console.error(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [newsLoaded, news]);
 
   const refreshPortfolio = async () => {
     try {

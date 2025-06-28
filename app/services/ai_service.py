@@ -7,6 +7,7 @@ import json
 import logging
 import yfinance as yf
 import time
+import re
 from database import SessionLocal, AIDecision, NewsAnalysis, StockAnalysis, SentimentEnum, TradeActionEnum
 from datetime import datetime
 
@@ -255,14 +256,14 @@ Business Summary: {company_info.get('longBusinessSummary', 'N/A')[:300]}...
         # Format news items with more detail
         news_text = ""
         if news_items:
-            news_text += f"Found {len(news_items)} relevant news articles:\n"
+            news_text += f"**RECENT NEWS ANALYSIS** - Found {len(news_items)} relevant articles:\n"
             for idx, news in enumerate(news_items[:5], 1):  # Limit to top 5 news items
-                news_text += f"{idx}. Title: {news.title}\n"
-                news_text += f"   Description: {news.description}\n"
-                news_text += f"   Source: {news.source}\n"
-                news_text += f"   Published: {news.published_at}\n\n"
+                news_text += f"{idx}. **{news.title}**\n"
+                news_text += f"   Summary: {news.description}\n"
+                news_text += f"   Source: {news.source} | Published: {news.published_at}\n"
+                news_text += f"   Analysis Impact: Consider how this news affects investor sentiment and stock performance\n\n"
         else:
-            news_text = "No recent news articles found for this stock.\n"
+            news_text = "**NO RECENT NEWS AVAILABLE** - Analysis based on stock data only. This limits prediction accuracy.\n"
         
         # Format portfolio context
         portfolio_text = ""
@@ -294,7 +295,7 @@ NEWS SENTIMENT & MARKET IMPACT:
 
 INSTRUCTIONS:
 1. Analyze {company_name}'s current technical indicators and price trends
-2. Evaluate the sentiment and impact of recent news on {company_name}
+2. **CRITICAL**: Thoroughly evaluate the sentiment and impact of recent news on {company_name} - this is essential for trading decisions
 3. Consider market conditions and volatility affecting {company_name}
 4. Assess risk-reward potential based on available data and company fundamentals
 5. Make a trading recommendation (BUY, SELL, or HOLD)
@@ -304,9 +305,11 @@ INSTRUCTIONS:
 
 IMPORTANT: 
 - Base your analysis ONLY on the provided data
+- **NEWS ANALYSIS IS CRITICAL**: Pay special attention to news sentiment and its direct impact on stock performance
 - Do not use predetermined rules or percentages
-- Consider the news sentiment and its relevance to the stock
+- Consider the news sentiment and its relevance to the stock price movement
 - Factor in company fundamentals, sector trends, and market conditions
+- If no news is available, note this limitation in your reasoning
 - Respond ONLY with valid JSON. Do not include any text before or after the JSON.
 
 JSON format (required):
@@ -322,7 +325,7 @@ Make informed decisions based on the data provided. Consider both opportunity an
         return prompt
     
     def _parse_llm_response(self, response: str, stock_info: StockInfo) -> TradeDecision:
-        """Parse LLM response into TradeDecision object"""
+        """Parse LLM response into TradeDecision object with robust error handling"""
         logger.info(f"Parsing LLM response: {response[:200]}...")
         
         try:
@@ -331,8 +334,11 @@ Make informed decisions based on the data provided. Consider both opportunity an
             logger.info(f"Response length: {len(response)} characters")
             logger.info(f"First 200 chars: {response[:200]}")
             
-            # Try to extract JSON from response - handle multiple JSON objects
-            start_idx = response.find('{')
+            # Clean the response first to handle control characters
+            cleaned_response = self._clean_json_response(response)
+            
+            # Try to extract JSON from cleaned response
+            start_idx = cleaned_response.find('{')
             
             if start_idx == -1:
                 logger.error("No JSON object found in AI response")
@@ -342,10 +348,10 @@ Make informed decisions based on the data provided. Consider both opportunity an
             brace_count = 0
             end_idx = -1
             
-            for i in range(start_idx, len(response)):
-                if response[i] == '{':
+            for i in range(start_idx, len(cleaned_response)):
+                if cleaned_response[i] == '{':
                     brace_count += 1
-                elif response[i] == '}':
+                elif cleaned_response[i] == '}':
                     brace_count -= 1
                     if brace_count == 0:
                         end_idx = i + 1
@@ -355,35 +361,38 @@ Make informed decisions based on the data provided. Consider both opportunity an
                 logger.error("No complete JSON object found in AI response")
                 raise ValueError("AI response contains incomplete JSON")
             
-            json_str = response[start_idx:end_idx].strip()
-            logger.info(f"📝 Extracted JSON: {json_str}")
+            json_str = cleaned_response[start_idx:end_idx].strip()
+            logger.info(f"📝 Extracted JSON: {json_str[:200]}...")
             
             # Try to parse the JSON
             try:
                 data = json.loads(json_str)
-                logger.info(f"✅ Successfully parsed JSON: {data}")
+                logger.info(f"✅ Successfully parsed JSON")
             except json.JSONDecodeError as e:
                 logger.warning(f"⚠️ Initial JSON parse failed: {e}")
+                logger.warning(f"Problematic character at position {e.pos}: '{json_str[max(0, e.pos-5):e.pos+5]}'")
                 
-                # Try to fix common JSON issues
-                import re
+                # Try more aggressive cleanup for JSON issues
+                fixed_json = self._fix_json_string(json_str)
                 
-                # Remove trailing commas
-                fixed_json = re.sub(r',\s*}', '}', json_str)
-                fixed_json = re.sub(r',\s*]', ']', fixed_json)
-                
-                # Fix quotes issues
-                fixed_json = re.sub(r'(?<!\\)"([^"]*)"(?=\s*[,}])', r'"\1"', fixed_json)
-                
-                logger.info(f"🔧 Attempting to parse fixed JSON: {fixed_json}")
+                logger.info(f"🔧 Attempting to parse fixed JSON...")
                 
                 try:
                     data = json.loads(fixed_json)
-                    logger.info(f"✅ Successfully parsed fixed JSON: {data}")
+                    logger.info(f"✅ Successfully parsed fixed JSON")
                 except json.JSONDecodeError as e2:
                     logger.error(f"❌ JSON parse failed even after cleanup: {e2}")
-                    logger.error(f"Problematic JSON: {fixed_json}")
-                    raise ValueError(f"Failed to parse AI response as JSON. Original error: {e}, Fixed error: {e2}")
+                    logger.error(f"Problematic JSON first 500 chars: {fixed_json[:500]}")
+                    
+                    # Additional debugging - show character codes around error
+                    if e2.pos < len(fixed_json):
+                        error_context = fixed_json[max(0, e2.pos-10):e2.pos+10]
+                        char_codes = [f"'{c}'({ord(c)})" for c in error_context]
+                        logger.error(f"Character codes around error: {char_codes}")
+                    
+                    # Fallback: try to extract values manually using regex
+                    logger.warning("🚨 Attempting manual value extraction as fallback")
+                    data = self._extract_values_manually(cleaned_response)
             
             # Validate and extract data with defaults
             action_str = data.get('action', 'hold').lower().strip()
@@ -394,10 +403,10 @@ Make informed decisions based on the data provided. Consider both opportunity an
             action = TradeAction(action_str)
             confidence = max(0.0, min(1.0, float(data.get('confidence', 0.5))))
             quantity_percentage = max(1.0, min(50.0, float(data.get('quantity_percentage', 5))))
-            reasoning = str(data.get('reasoning', 'AI analysis completed'))
+            reasoning = str(data.get('reasoning', 'AI analysis completed'))[:1000]  # Limit length
             
             logger.info(f"🎯 AI Decision for {stock_info.symbol}: {action.value.upper()} (confidence: {confidence:.1%}, quantity: {quantity_percentage}%)")
-            logger.info(f"💭 AI Reasoning: {reasoning}...")
+            logger.info(f"💭 AI Reasoning: {reasoning[:100]}...")
             
             # Calculate actual quantity based on percentage
             # For simplicity, assume $10,000 position size for BUY orders
@@ -419,6 +428,170 @@ Make informed decisions based on the data provided. Consider both opportunity an
         except Exception as e:
             logger.error(f"Error parsing LLM response: {e}")
             raise RuntimeError(f"Failed to parse AI response: {e}")
+    
+    def _clean_json_response(self, response: str) -> str:
+        """Clean JSON response by removing control characters and fixing common issues"""
+        try:
+            # AGGRESSIVE CONTROL CHARACTER REMOVAL
+            # Remove ALL control characters (0-31) except space (32), newline (10), tab (9), and carriage return (13)
+            cleaned = ''.join(char for char in response if ord(char) >= 32 or char in '\n\t\r')
+            
+            # Additional control character cleanup - remove common problematic Unicode characters
+            # Remove zero-width characters, non-breaking spaces, etc.
+            cleaned = re.sub(r'[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028-\u202F\u205F-\u206F\uFEFF]', '', cleaned)
+            
+            # Remove common prefixes/suffixes that might interfere
+            cleaned = cleaned.strip()
+            
+            # Remove any markdown code block markers
+            cleaned = re.sub(r'```json\s*', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'```\s*$', '', cleaned)
+            
+            # Remove any extra text before the first {
+            first_brace = cleaned.find('{')
+            if first_brace > 0:
+                cleaned = cleaned[first_brace:]
+            
+            # Remove any extra text after the last }
+            last_brace = cleaned.rfind('}')
+            if last_brace != -1:
+                cleaned = cleaned[:last_brace + 1]
+            
+            # Clean up any remaining whitespace issues
+            cleaned = re.sub(r'\s+', ' ', cleaned)  # Replace multiple whitespace with single space
+            cleaned = re.sub(r'\s*,\s*', ',', cleaned)  # Clean comma spacing
+            cleaned = re.sub(r'\s*:\s*', ':', cleaned)  # Clean colon spacing
+            cleaned = re.sub(r'\s*{\s*', '{', cleaned)  # Clean brace spacing
+            cleaned = re.sub(r'\s*}\s*', '}', cleaned)  # Clean brace spacing
+            
+            logger.info(f"🧹 Aggressively cleaned JSON response (length: {len(cleaned)})")
+            return cleaned
+            
+        except Exception as e:
+            logger.error(f"Error cleaning JSON response: {e}")
+            return response
+    
+    def _fix_json_string(self, json_str: str) -> str:
+        """Attempt to fix common JSON issues including type corrections"""
+        try:
+            # Fix escaped quotes that might be causing issues
+            fixed = json_str.replace('\\"', '"')
+            
+            # Fix trailing commas
+            fixed = re.sub(r',\s*}', '}', fixed)
+            fixed = re.sub(r',\s*]', ']', fixed)
+            
+            # CRITICAL FIX: Convert string numbers to actual numbers
+            # Fix confidence values that are strings
+            fixed = re.sub(r'"confidence":\s*"([0-9.]+)"', r'"confidence": \1', fixed)
+            
+            # Fix quantity_percentage values that are strings
+            fixed = re.sub(r'"quantity_percentage":\s*"([0-9.]+)"', r'"quantity_percentage": \1', fixed)
+            
+            # Fix other numeric values that might be strings
+            fixed = re.sub(r'"(\w+)":\s*"([0-9.]+)"', r'"\1": \2', fixed)
+            
+            # Fix action values to ensure they're proper strings
+            fixed = re.sub(r'"action":\s*([A-Z]+)', r'"action": "\1"', fixed)
+            
+            # Ensure proper string quoting for non-numeric values
+            # This regex is more careful to avoid breaking already-quoted strings
+            fixed = re.sub(r':\s*([^",{\[}\]\s\d][^,}]*?)(?=\s*[,}])', r': "\1"', fixed)
+            
+            logger.info(f"🔧 Fixed JSON string with type corrections")
+            return fixed
+            
+        except Exception as e:
+            logger.error(f"Error fixing JSON string: {e}")
+            return json_str
+    
+    def _extract_values_manually(self, response: str) -> Dict:
+        """Manual extraction of values from AI response as fallback"""
+        try:
+            logger.warning("🚨 Using manual value extraction - AI response was not valid JSON")
+            
+            data = {
+                'action': 'hold',
+                'confidence': 0.5,
+                'quantity_percentage': 5.0,
+                'reasoning': 'AI analysis completed with manual parsing fallback'
+            }
+            
+            # Try to extract action (look for common patterns)
+            action_patterns = [
+                r'"action":\s*"([^"]*)"',
+                r'"action":\s*([A-Z]+)',
+                r'action.*?([A-Z]{3,4})',  # BUY, SELL, HOLD
+            ]
+            
+            for pattern in action_patterns:
+                action_match = re.search(pattern, response, re.IGNORECASE)
+                if action_match:
+                    action = action_match.group(1).lower().strip()
+                    if action in ['buy', 'sell', 'hold']:
+                        data['action'] = action
+                        break
+            
+            # Try to extract confidence (handle both string and numeric formats)
+            confidence_patterns = [
+                r'"confidence":\s*"([0-9.]+)"',
+                r'"confidence":\s*([0-9.]+)',
+                r'confidence.*?([0-9.]+)',
+            ]
+            
+            for pattern in confidence_patterns:
+                confidence_match = re.search(pattern, response, re.IGNORECASE)
+                if confidence_match:
+                    try:
+                        confidence = float(confidence_match.group(1))
+                        data['confidence'] = max(0.0, min(1.0, confidence))
+                        break
+                    except ValueError:
+                        continue
+            
+            # Try to extract quantity_percentage (handle both string and numeric formats)
+            quantity_patterns = [
+                r'"quantity_percentage":\s*"([0-9.]+)"',
+                r'"quantity_percentage":\s*([0-9.]+)',
+                r'quantity_percentage.*?([0-9.]+)',
+            ]
+            
+            for pattern in quantity_patterns:
+                quantity_match = re.search(pattern, response, re.IGNORECASE)
+                if quantity_match:
+                    try:
+                        quantity = float(quantity_match.group(1))
+                        data['quantity_percentage'] = max(1.0, min(50.0, quantity))
+                        break
+                    except ValueError:
+                        continue
+            
+            # Try to extract reasoning (handle multiline strings)
+            reasoning_patterns = [
+                r'"reasoning":\s*"([^"]*)"',
+                r'"reasoning":\s*"([^"]*?)(?=")',  # Non-greedy until next quote
+                r'"reasoning":\s*"(.*?)"',  # Greedy version
+            ]
+            
+            for pattern in reasoning_patterns:
+                reasoning_match = re.search(pattern, response, re.IGNORECASE | re.DOTALL)
+                if reasoning_match:
+                    reasoning = reasoning_match.group(1)
+                    if reasoning and len(reasoning.strip()) > 10:  # Only use if meaningful
+                        data['reasoning'] = reasoning[:1000]  # Limit length
+                        break
+            
+            logger.info(f"🔍 Manually extracted values: action={data['action']}, confidence={data['confidence']}, quantity={data['quantity_percentage']}%")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error in manual value extraction: {e}")
+            return {
+                'action': 'hold',
+                'confidence': 0.5,
+                'quantity_percentage': 5.0,
+                'reasoning': 'Default values due to parsing error'
+            }
     
     async def get_ai_decisions_history(self, symbol: str = None, limit: int = 50) -> List[Dict]:
         """Get AI decision history"""

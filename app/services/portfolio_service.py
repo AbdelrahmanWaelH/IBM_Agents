@@ -4,7 +4,7 @@ from config import settings
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class PortfolioService:
             "action": "buy",
             "quantity": quantity,
             "price": price,
-            "timestamp": str(datetime.now())
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
         self._save_portfolio()
@@ -151,7 +151,7 @@ class PortfolioService:
             "action": "sell",
             "quantity": quantity,
             "price": price,
-            "timestamp": str(datetime.now())
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
         self._save_portfolio()

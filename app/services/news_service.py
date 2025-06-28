@@ -1,46 +1,41 @@
 import requests
 import yfinance as yf
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from models import NewsItem
 from config import settings
 import logging
 import asyncio
 import time
-import re
+import json
 
 logger = logging.getLogger(__name__)
 
 class NewsService:
     def __init__(self):
-        self.base_url = "https://newsapi.org/v2"
-        self.api_key = settings.NEWS_API_KEY
+        self.base_url = "https://google.serper.dev"
+        self.api_key = settings.SERPER_API_KEY
         self.company_cache = {}
         self.cache_duration = 3600  # 1 hour cache
         
-    def _clean_company_name(self, company_name: str) -> str:
-        """Clean company name for better search results - NewsAPI is very picky"""
-        if not company_name:
-            return ""
-        
-        # Remove common suffixes that confuse NewsAPI
-        suffixes_to_remove = [
-            r'\s+Inc\.?$', r'\s+Corporation$', r'\s+Corp\.?$', r'\s+Company$', r'\s+Co\.?$',
-            r'\s+Ltd\.?$', r'\s+Limited$', r'\s+LLC$', r'\s+LP$', r'\s+LLP$',
-            r'\s+Group$', r'\s+Holdings?$', r'\s+International$', r'\s+Technologies$',
-            r'\s+Systems$', r'\s+Solutions$', r'\s+& Co\.?$', r'\s+& Company$'
-        ]
-        
-        cleaned = company_name
-        for suffix in suffixes_to_remove:
-            cleaned = re.sub(suffix, '', cleaned, flags=re.IGNORECASE)
-        
-        # Remove special characters that break NewsAPI queries
-        cleaned = re.sub(r'[&.,()"]', '', cleaned)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        logger.info(f"🧹 Cleaned: '{company_name}' -> '{cleaned}'")
-        return cleaned
+        # Financial keywords for relevance filtering
+        self.financial_keywords = {
+            'high_priority': [
+                'earnings', 'revenue', 'profit', 'loss', 'quarterly', 'annual',
+                'stock', 'shares', 'trading', 'market cap', 'dividend',
+                'analyst', 'upgrade', 'downgrade', 'price target', 'rating',
+                'merger', 'acquisition', 'ipo', 'buyback', 'split'
+            ],
+            'medium_priority': [
+                'financial', 'results', 'guidance', 'forecast', 'outlook',
+                'investment', 'investor', 'valuation', 'volatility',
+                'ceo', 'cfo', 'executive', 'board', 'management'
+            ],
+            'sector_terms': [
+                'technology', 'healthcare', 'finance', 'energy', 'retail',
+                'manufacturing', 'automotive', 'pharmaceutical', 'biotech'
+            ]
+        }
         
     def _get_company_info(self, symbol: str) -> Optional[Dict[str, str]]:
         """Get company information using yfinance"""
@@ -82,45 +77,36 @@ class NewsService:
             logger.error(f"❌ Error getting company info for {symbol}: {e}")
             return None
     
-    def _generate_search_strategies(self, symbol: str, company_info: Optional[Dict[str, str]] = None) -> List[str]:
-        """Generate search queries - simplified approach that actually works with NewsAPI"""
+    def _generate_search_queries(self, symbol: str, company_info: Optional[Dict[str, str]] = None) -> List[str]:
+        """Generate targeted search queries for SERPER"""
         queries = []
         symbol = symbol.upper().strip()
         
-        logger.info(f"🎯 Generating search strategies for {symbol}")
+        logger.info(f"🎯 Generating SERPER search queries for {symbol}")
         
         if company_info:
             long_name = company_info.get('longName', '').strip()
             short_name = company_info.get('shortName', '').strip()
             
-            # Clean names for NewsAPI
-            clean_long = self._clean_company_name(long_name)
-            clean_short = self._clean_company_name(short_name)
+            # Use company names for better relevance
+            if long_name:
+                queries.extend([
+                    f"{long_name} earnings news",
+                    f"{long_name} stock news",
+                    f"{long_name} financial results"
+                ])
             
-            # Strategy 1: Simple company name (most reliable with NewsAPI)
-            if clean_long and len(clean_long) > 3:
-                queries.append(clean_long)
-                logger.info(f"📝 Strategy 1: Company name only -> '{clean_long}'")
-            
-            # Strategy 2: Company name + stock 
-            if clean_long and len(clean_long) > 3:
-                queries.append(f"{clean_long} stock")
-                logger.info(f"📝 Strategy 2: Company + stock -> '{clean_long} stock'")
-            
-            # Strategy 3: Short name if different
-            if clean_short and clean_short != clean_long and len(clean_short) > 2:
-                queries.append(clean_short)
-                logger.info(f"📝 Strategy 3: Short name -> '{clean_short}'")
+            if short_name and short_name != long_name:
+                queries.append(f"{short_name} stock news")
         
-        # Strategy 4: Symbol alone (fallback)
-        queries.append(symbol)
-        logger.info(f"📝 Strategy 4: Symbol only -> '{symbol}'")
+        # Always include symbol-based queries
+        queries.extend([
+            f"{symbol} stock earnings",
+            f"{symbol} financial news",
+            f"{symbol} analyst rating"
+        ])
         
-        # Strategy 5: Symbol + stock
-        queries.append(f"{symbol} stock")
-        logger.info(f"📝 Strategy 5: Symbol + stock -> '{symbol} stock'")
-        
-        # Remove duplicates
+        # Remove duplicates while preserving order
         unique_queries = []
         seen = set()
         for q in queries:
@@ -128,314 +114,192 @@ class NewsService:
                 unique_queries.append(q)
                 seen.add(q)
         
-        logger.info(f"📊 Final strategies ({len(unique_queries)}): {unique_queries}")
-        return unique_queries[:4]  # Limit to 4 to avoid rate limits
-    
-    async def _try_single_search(self, query: str, attempt: int = 1) -> List[Dict]:
-        """Try a single search with NewsAPI - with detailed logging"""
+        logger.info(f"📊 Generated {len(unique_queries)} search queries: {unique_queries[:3]}...")
+        return unique_queries[:4]  # Limit to 4 queries to avoid rate limits
+
+    async def _search_with_serper(self, query: str) -> List[Dict]:
+        """Search for news using SERPER API"""
         try:
-            url = f"{self.base_url}/everything"
+            url = f"{self.base_url}/news"
             
-            # Simple params - NewsAPI is very sensitive
-            params = {
-                'q': query,
-                'language': 'en',
-                'sortBy': 'publishedAt',
-                'pageSize': 50,
-                'apiKey': self.api_key,
-                'from': (datetime.now() - timedelta(days=5)).isoformat(),
+            headers = {
+                'X-API-KEY': self.api_key,
+                'Content-Type': 'application/json'
             }
             
-            logger.info(f"🌐 ATTEMPT {attempt}: Searching NewsAPI")
-            logger.info(f"   Query: '{query}'")
-            logger.info(f"   URL: {url}")
-            logger.info(f"   Params: {params}")
+            # SERPER payload for news search
+            payload = {
+                'q': query,
+                'num': 10,  # Number of results
+                'tbs': 'qdr:w',  # Last week
+                'gl': 'us',  # Country
+                'hl': 'en'   # Language
+            }
             
-            response = requests.get(url, params=params, timeout=25)
+            logger.info(f"🌐 SERPER search: '{query}'")
             
-            logger.info(f"📡 Response status: {response.status_code}")
-            logger.info(f"📡 Response headers: {dict(response.headers)}")
-            
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             
             data = response.json()
-            logger.info(f"📊 API Response:")
-            logger.info(f"   Status: {data.get('status', 'unknown')}")
-            logger.info(f"   Total Results: {data.get('totalResults', 0)}")
-            logger.info(f"   Articles returned: {len(data.get('articles', []))}")
+            news_results = data.get('news', [])
             
-            articles = data.get('articles', [])
+            logger.info(f"📊 SERPER returned {len(news_results)} articles for: '{query}'")
             
-            if not articles:
-                logger.warning(f"⚠️ No articles for query: '{query}'")
-                logger.warning(f"⚠️ Full API response: {data}")
-            else:
-                logger.info(f"✅ Found {len(articles)} articles for: '{query}'")
-                # Log first few article titles for debugging
-                for i, article in enumerate(articles[:3], 1):
+            if news_results:
+                # Log sample for debugging
+                for i, article in enumerate(news_results[:2], 1):
                     title = article.get('title', 'No title')[:60]
-                    source = article.get('source', {}).get('name', 'Unknown')
+                    source = article.get('source', 'Unknown')
                     logger.info(f"   📄 {i}. {title}... ({source})")
             
-            return articles
+            return news_results
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Network error for '{query}': {e}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"   Response status: {e.response.status_code}")
-                logger.error(f"   Response text: {e.response.text[:200]}")
+            logger.error(f"❌ SERPER network error for query '{query}': {e}")
             return []
         except Exception as e:
-            logger.error(f"❌ Unexpected error for '{query}': {e}")
+            logger.error(f"❌ SERPER unexpected error for query '{query}': {e}")
             return []
     
     async def get_financial_news(self, query: str = "stock market", limit: int = 10) -> List[NewsItem]:
-        """Get financial news with robust fallback strategies"""
+        """Get financial news using SERPER API for better relevance and stability"""
         if not self.api_key:
-            logger.error("❌ NewsAPI key not configured")
-            raise ValueError("NewsAPI key not configured. Please set NEWS_API_KEY in environment.")
+            logger.error("❌ SERPER API key not configured")
+            raise ValueError("SERPER API key not configured. Please set SERPER_API_KEY in environment.")
         
         try:
-            logger.info(f"🚀 Starting news search for: '{query}'")
+            logger.info(f"🚀 Starting SERPER news search for: '{query}'")
             
             # Get company info if it looks like a stock symbol
             company_info = None
             if query.upper().isalpha() and len(query) <= 5:
                 company_info = self._get_company_info(query)
             
-            # Generate search strategies
-            search_queries = self._generate_search_strategies(query, company_info)
+            # Generate targeted search queries
+            search_queries = self._generate_search_queries(query, company_info)
             
             if not search_queries:
-                logger.warning("⚠️ No search strategies generated, using fallback")
-                search_queries = [query, f"{query} stock"]
+                logger.warning("⚠️ No search queries generated, using fallback")
+                search_queries = [f"{query} stock news", "financial news"]
             
-            # Try each search strategy
+            # Search with SERPER
             all_articles = []
             successful_searches = 0
             
             for i, search_query in enumerate(search_queries, 1):
-                logger.info(f"🔍 Trying search strategy {i}/{len(search_queries)}: '{search_query}'")
+                logger.info(f"🔍 SERPER search {i}/{len(search_queries)}: '{search_query}'")
                 
-                articles = await self._try_single_search(search_query, i)
+                articles = await self._search_with_serper(search_query)
                 
                 if articles:
                     all_articles.extend(articles)
                     successful_searches += 1
-                    logger.info(f"✅ Strategy {i} successful: {len(articles)} articles")
+                    logger.info(f"✅ SERPER strategy {i} successful: {len(articles)} articles")
                 else:
-                    logger.warning(f"⚠️ Strategy {i} failed: no articles")
+                    logger.warning(f"⚠️ SERPER strategy {i} failed: no articles")
                 
-                # Small delay between requests
+                # Small delay between requests to be respectful
                 if i < len(search_queries):
                     await asyncio.sleep(1)
             
-            logger.info(f"📊 Search complete: {successful_searches}/{len(search_queries)} strategies successful")
+            logger.info(f"📊 SERPER search complete: {successful_searches}/{len(search_queries)} strategies successful")
             
-            # Remove duplicates
+            # Remove duplicates by URL
             seen_urls = set()
             unique_articles = []
             for article in all_articles:
-                url = article.get('url', '')
+                url = article.get('link', '')
                 if url and url not in seen_urls:
                     seen_urls.add(url)
                     unique_articles.append(article)
             
-            # Sort by date
-            unique_articles.sort(key=lambda x: x.get('publishedAt', ''), reverse=True)
+            logger.info(f"🔄 After deduplication: {len(unique_articles)} unique articles")
             
-            logger.info(f"� After deduplication: {len(unique_articles)} unique articles")
+            # Sort by date (SERPER provides relative times, we'll prioritize by position)
+            # SERPER already returns results in relevance order
             
             # Convert to NewsItem objects
             news_items = []
             for article in unique_articles[:limit]:
-                if article.get('title') and article.get('url'):
+                if article.get('title') and article.get('link'):
                     try:
-                        published_at = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
+                        # Handle SERPER date format
+                        date_str = article.get('date', '')
+                        published_at = datetime.now(timezone.utc)  # Default to now with timezone
+                        
+                        # Try to parse relative dates like "2 hours ago", "1 day ago"
+                        if 'hour' in date_str:
+                            hours = int(date_str.split()[0]) if date_str.split()[0].isdigit() else 1
+                            published_at = datetime.now(timezone.utc) - timedelta(hours=hours)
+                        elif 'day' in date_str:
+                            days = int(date_str.split()[0]) if date_str.split()[0].isdigit() else 1
+                            published_at = datetime.now(timezone.utc) - timedelta(days=days)
+                        elif 'week' in date_str:
+                            weeks = int(date_str.split()[0]) if date_str.split()[0].isdigit() else 1
+                            published_at = datetime.now(timezone.utc) - timedelta(weeks=weeks)
+                        
                         news_item = NewsItem(
                             title=article['title'][:200],
-                            description=(article.get('description') or '')[:500],
-                            url=article['url'],
+                            description=(article.get('snippet', '') or article.get('description', ''))[:500],
+                            url=article['link'],
                             published_at=published_at,
-                            source=article['source']['name']
+                            source=article.get('source', 'Unknown')
                         )
                         news_items.append(news_item)
                         
                     except Exception as e:
-                        logger.warning(f"⚠️ Error parsing article: {e}")
+                        logger.warning(f"⚠️ Error parsing SERPER article: {e}")
                         continue
             
             # Final logging
             if news_items:
-                logger.info(f"✅ SUCCESS: {len(news_items)} news articles processed for '{query}'")
+                logger.info(f"✅ SERPER SUCCESS: {len(news_items)} relevant financial news for '{query}'")
                 if company_info:
                     company_name = company_info.get('longName', query)
-                    logger.info(f"📈 News found for {query} ({company_name})")
+                    logger.info(f"📈 Financial news found for {query} ({company_name})")
                 
                 for i, item in enumerate(news_items[:3], 1):
-                    logger.info(f"   📄 {i}. {item.title[:80]}... ({item.source})")
+                    logger.info(f"   💰 {i}. {item.title[:80]}... ({item.source})")
             else:
-                logger.warning(f"⚠️ No news articles available for {query} - analysis will be based on stock data only")
+                logger.warning(f"⚠️ No relevant financial news found for {query}")
             
             return news_items
             
         except Exception as e:
-            logger.error(f"❌ Critical error fetching news for '{query}': {e}")
-            return []  # Return empty list instead of raising exception
+            logger.error(f"❌ Critical error fetching SERPER news for '{query}': {e}")
+            return []
     
     async def get_stock_news(self, symbol: str, limit: int = 5) -> List[NewsItem]:
-        """Get news specific to a stock symbol"""
+        """Get news specific to a stock symbol using SERPER"""
         return await self.get_financial_news(symbol, limit)
     
-    async def _filter_relevant_news_with_ai(self, articles: List[Dict], symbol: str, company_info: Optional[Dict[str, str]] = None) -> List[Dict]:
-        """Use AI to filter news articles for relevance to the specific company/stock"""
-        if not articles:
-            return []
+    async def get_market_news(self, limit: int = 10) -> List[NewsItem]:
+        """Get general market news using SERPER"""
+        market_queries = [
+            "stock market news today",
+            "financial markets outlook", 
+            "trading news earnings",
+            "market analysis today"
+        ]
         
-        try:
-            # Import here to avoid circular imports
-            from services.ai_service import AITradingService
-            ai_service = AITradingService()
-            
-            if not ai_service.llm:
-                logger.warning("AI not available for news filtering, returning all articles")
-                return articles
-            
-            company_name = "Unknown Company"
-            company_description = ""
-            
-            if company_info:
-                company_name = company_info.get('longName', company_info.get('shortName', symbol))
-                company_description = company_info.get('longBusinessSummary', '')[:200]
-            
-            # Process articles in batches to avoid overwhelming the AI
-            relevant_articles = []
-            
-            for i, article in enumerate(articles[:10]):  # Limit to first 10 articles
-                title = article.get('title', '')
-                description = article.get('description', '')
+        all_news = []
+        for query in market_queries[:2]:  # Limit to avoid rate limits
+            try:
+                news = await self.get_financial_news(query, limit//2)
+                all_news.extend(news)
+                if len(all_news) >= limit:
+                    break
+            except Exception as e:
+                logger.error(f"Error fetching market news for '{query}': {e}")
+                continue
                 
-                if not title:
-                    continue
+        # Remove duplicates and return
+        seen_urls = set()
+        unique_news = []
+        for news_item in all_news:
+            if news_item.url not in seen_urls:
+                seen_urls.add(news_item.url)
+                unique_news.append(news_item)
                 
-                # Create relevance check prompt
-                relevance_prompt = f"""
-Analyze if this news article is directly relevant to the company {company_name} (symbol: {symbol}).
-
-Company: {company_name}
-Symbol: {symbol}
-Company Description: {company_description}
-
-News Article:
-Title: {title}
-Description: {description}
-
-Is this article specifically about {company_name} or directly related to their business, stock performance, earnings, products, or industry developments that would significantly impact their stock price?
-
-Consider relevant:
-- Earnings reports, financial results
-- Product launches, business developments
-- Leadership changes, strategic decisions
-- Industry developments affecting the company
-- Stock price movements, analyst ratings
-- Mergers, acquisitions, partnerships
-- Regulatory impacts on the company
-
-Consider NOT relevant:
-- General market news not specific to the company
-- News about completely different companies
-- Generic industry news with no specific company mention
-- Unrelated topics (sports, entertainment, politics) unless directly impacting the company
-
-Respond with ONLY: relevant or not_relevant
-"""
-                
-                try:
-                    response = ai_service.llm.invoke(relevance_prompt)
-                    relevance = response.strip().lower()
-                    
-                    if 'relevant' in relevance and 'not_relevant' not in relevance:
-                        relevant_articles.append(article)
-                        logger.info(f"✅ AI marked as relevant: '{title[:60]}...'")
-                    else:
-                        logger.info(f"❌ AI marked as not relevant: '{title[:60]}...'")
-                        
-                except Exception as e:
-                    logger.warning(f"Error in AI relevance check for article {i+1}: {e}")
-                    # If AI fails, include the article (conservative approach)
-                    relevant_articles.append(article)
-            
-            logger.info(f"🤖 AI filtered news: {len(relevant_articles)}/{len(articles)} articles deemed relevant for {symbol}")
-            return relevant_articles
-            
-        except Exception as e:
-            logger.error(f"Error in AI news filtering: {e}")
-            return articles  # Return all articles if filtering fails
-    
-    def _enhanced_search_strategies(self, symbol: str, company_info: Optional[Dict[str, str]] = None) -> List[str]:
-        """Enhanced search strategies with better company-focused queries"""
-        queries = []
-        symbol = symbol.upper().strip()
-        
-        logger.info(f"🎯 Enhanced search strategies for {symbol}")
-        
-        if company_info:
-            long_name = company_info.get('longName', '').strip()
-            short_name = company_info.get('shortName', '').strip()
-            sector = company_info.get('sector', '').strip()
-            
-            # Clean names for NewsAPI
-            clean_long = self._clean_company_name(long_name)
-            clean_short = self._clean_company_name(short_name)
-            
-            # Strategy 1: Company name + financial terms (highest priority)
-            if clean_long and len(clean_long) > 3:
-                # More specific financial queries
-                queries.extend([
-                    f"{clean_long} earnings",
-                    f"{clean_long} revenue", 
-                    f"{clean_long} stock price",
-                    f"{clean_long} quarterly results"
-                ])
-                logger.info(f"📝 Added earnings/financial queries for: {clean_long}")
-            
-            # Strategy 2: Company name with stock-specific terms
-            if clean_long:
-                queries.extend([
-                    f"{clean_long} shares",
-                    f"{clean_long} market",
-                    f"{clean_long} trading"
-                ])
-                
-            # Strategy 3: Sector-specific news (if available)
-            if sector and clean_long:
-                sector_clean = self._clean_company_name(sector)
-                if sector_clean:
-                    queries.append(f"{clean_long} {sector_clean}")
-                    logger.info(f"📝 Added sector query: {clean_long} {sector_clean}")
-            
-            # Strategy 4: Short name variations
-            if clean_short and clean_short != clean_long and len(clean_short) > 2:
-                queries.extend([
-                    f"{clean_short} earnings",
-                    f"{clean_short} stock"
-                ])
-        
-        # Strategy 5: Symbol-based fallbacks (lower priority)
-        queries.extend([
-            f"{symbol} earnings report",
-            f"{symbol} quarterly",
-            f"{symbol} stock news",
-            symbol  # Last resort: just the symbol
-        ])
-        
-        # Remove duplicates while preserving order
-        unique_queries = []
-        seen = set()
-        for q in queries:
-            if q and q not in seen and len(q.strip()) > 2:
-                unique_queries.append(q)
-                seen.add(q)
-        
-        logger.info(f"📊 Enhanced strategies ({len(unique_queries)}): {unique_queries[:6]}")
-        return unique_queries[:6]  # Limit to 6 queries
+        return unique_news[:limit]

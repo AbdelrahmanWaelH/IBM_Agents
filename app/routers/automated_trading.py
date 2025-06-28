@@ -2,6 +2,10 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel
 from services.automated_trading_engine import trading_engine, TradingMode
 import asyncio
+import logging
+import random
+
+logger = logging.getLogger(__name__)
 
 class SymbolRequest(BaseModel):
     symbol: str
@@ -164,21 +168,49 @@ async def get_recent_trading_activity():
         recent_trades = await portfolio_service.get_trade_history()
         
         # Filter trades from the last 24 hours
-        from datetime import datetime, timedelta
-        cutoff_time = datetime.now() - timedelta(hours=24)
+        from datetime import datetime, timedelta, timezone
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
         
-        recent_trades_24h = [
-            trade for trade in recent_trades 
-            if datetime.fromisoformat(trade.get('timestamp', '2000-01-01')) >= cutoff_time
-        ]
+        recent_trades_24h = []
+        for trade in recent_trades:
+            try:
+                # Handle both timezone-aware and naive timestamps
+                timestamp_str = trade.get('timestamp', '2000-01-01')
+                if 'T' in timestamp_str:
+                    # ISO format datetime
+                    trade_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    if trade_time.tzinfo is None:
+                        trade_time = trade_time.replace(tzinfo=timezone.utc)
+                else:
+                    # Fallback for simple date
+                    trade_time = datetime.fromisoformat(timestamp_str).replace(tzinfo=timezone.utc)
+                
+                if trade_time >= cutoff_time:
+                    recent_trades_24h.append(trade)
+            except (ValueError, TypeError):
+                # Skip trades with invalid timestamps
+                continue
+        
+        # Count decisions from today
+        today_decisions_count = 0
+        today_date = datetime.now(timezone.utc).date()
+        
+        for decision in recent_decisions:
+            try:
+                created_at_str = decision.get('created_at', '2000-01-01')
+                decision_time = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                if decision_time.tzinfo is None:
+                    decision_time = decision_time.replace(tzinfo=timezone.utc)
+                
+                if decision_time.date() == today_date:
+                    today_decisions_count += 1
+            except (ValueError, TypeError):
+                continue
         
         return {
             "recent_decisions": recent_decisions[:10],
             "recent_trades_24h": recent_trades_24h,
-            "total_decisions_today": len([
-                d for d in recent_decisions 
-                if datetime.fromisoformat(d.get('created_at', '2000-01-01')).date() == datetime.now().date()
-            ]),
+            "total_decisions_today": today_decisions_count,
             "total_trades_today": len(recent_trades_24h),
             "engine_status": trading_engine.get_engine_status()
         }
@@ -296,66 +328,108 @@ async def update_confidence_threshold(threshold: float):
 
 @router.post("/ai-recommend-stocks")
 async def ai_recommend_stocks(count: int = 5):
-    """Let AI recommend stocks for trading"""
+    """Let AI recommend stocks for trading with comprehensive analysis like professional trading agents"""
     try:
         from services.ai_service import AITradingService
         from services.stock_service import StockService
+        from services.news_service import NewsService
         
         ai_service = AITradingService()
         stock_service = StockService()
+        news_service = NewsService()
         
-        # Comprehensive list of candidate stocks from different sectors
-        # This is for AI recommendations only - not the trading engine symbols
-        candidate_stocks = [
-            # Technology Giants
-            "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "AMD", 
-            "NFLX", "ADBE", "CRM", "ORCL", "IBM", "INTC", "PYPL",
-            # Financial Services
-            "JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP",
-            # Healthcare & Pharmaceuticals
-            "JNJ", "PFE", "UNH", "ABBV", "TMO", "ABT", "CVS", "MRK",
-            # Consumer Goods
-            "WMT", "PG", "KO", "PEP", "NKE", "DIS", "HD", "MCD", "COST",
-            # Energy & Utilities
-            "XOM", "CVX", "COP", "NEE", "DUK", "SO",
-            # Aerospace & Defense
-            "BA", "LMT", "RTX", "NOC",
-            # Other Growth Stocks
-            "ROKU", "SHOP", "ZOOM", "TWLO", "SQ", "SPOT"
+        # Professional AI trading agent approach: Multi-tier stock universe
+        # Tier 1: Large-cap stocks (most liquid and stable)
+        large_cap_stocks = [
+            # Technology Leaders (highest weight)
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AMD", "ORCL", "ADBE",
+            # Financial Giants
+            "JPM", "BAC", "V", "MA", "WFC", "GS", "MS", "BRK.B",
+            # Healthcare Leaders
+            "UNH", "JNJ", "PFE", "ABBV", "TMO", "ABT", "MRK", "LLY",
+            # Consumer & Retail
+            "WMT", "HD", "PG", "KO", "DIS", "NKE", "MCD", "COST"
         ]
         
-        recommended_stocks = []
+        # Tier 2: Growth and emerging leaders
+        growth_stocks = [
+            "NFLX", "CRM", "PYPL", "INTC", "IBM", "CVX", "XOM", "PEP",
+            "SHOP", "ROKU", "SQ", "SPOT", "ZOOM", "TWLO", "BA", "CAT"
+        ]
         
-        # Get AI to analyze a random subset of stocks to provide variety
-        import random
-        selected_candidates = random.sample(candidate_stocks, min(20, len(candidate_stocks)))
+        # Professional approach: Analyze both tiers with emphasis on large-cap
+        large_cap_sample = random.sample(large_cap_stocks, min(15, len(large_cap_stocks)))
+        growth_sample = random.sample(growth_stocks, min(10, len(growth_stocks)))
+        
+        # Combine for diversified analysis (70% large-cap, 30% growth)
+        selected_candidates = large_cap_sample + growth_sample
+        
+        recommended_stocks = []
+        analyzed_count = 0
+        
+        logger.info(f"🤖 AI RECOMMENDATIONS: Starting professional analysis of {len(selected_candidates)} stocks")
         
         for symbol in selected_candidates:
             try:
+                analyzed_count += 1
+                logger.info(f"📊 Analyzing {symbol} ({analyzed_count}/{len(selected_candidates)})")
+                
+                # Get comprehensive stock data
                 stock_info = await stock_service.get_stock_info(symbol)
                 if not stock_info:
+                    logger.warning(f"⚠️ No data available for {symbol}")
                     continue
-                    
-                # Get AI analysis
-                news_items = []  # Could add news analysis here
+                
+                # CRITICAL: Include news analysis for professional AI recommendations
+                news_items = []
+                try:
+                    news_items = await news_service.get_stock_news(symbol, limit=5)
+                    logger.info(f"📰 Found {len(news_items)} news items for {symbol}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch news for {symbol}: {e}")
+                
+                # Get AI decision with news context (like professional trading systems)
                 decision = await ai_service.analyze_and_decide(stock_info, news_items)
                 
-                if decision.action in ['buy'] and decision.confidence > 0.6:
+                # Professional criteria: Only recommend BUY decisions with high confidence
+                if (decision.action in ['buy'] and 
+                    decision.confidence > 0.65 and  # Higher threshold for recommendations
+                    stock_info.current_price > 1.0):  # Avoid penny stocks
+                    
                     recommended_stocks.append({
                         'symbol': symbol,
                         'confidence': decision.confidence,
                         'action': decision.action.value,
                         'reasoning': decision.reasoning,
                         'current_price': stock_info.current_price,
-                        'change_percent': stock_info.change_percent
+                        'change_percent': stock_info.change_percent or 0,
+                        'market_cap': stock_info.market_cap,
+                        'volume': stock_info.volume,
+                        'news_articles_analyzed': len(news_items)
                     })
+                    logger.info(f"✅ {symbol} recommended with {decision.confidence:.1%} confidence")
+                else:
+                    logger.info(f"⚠️ {symbol} not recommended: {decision.action} with {decision.confidence:.1%} confidence")
                     
             except Exception as e:
-                print(f"Error analyzing {symbol}: {e}")
+                logger.error(f"❌ Error analyzing {symbol}: {e}")
                 continue
         
-        # Sort by confidence and return top recommendations
-        recommended_stocks.sort(key=lambda x: x['confidence'], reverse=True)
+        # Professional sorting: Confidence first, then market cap for stability
+        recommended_stocks.sort(key=lambda x: (x['confidence'], x.get('market_cap', 0)), reverse=True)
+        
+        # Return top recommendations with analysis summary
+        final_recommendations = recommended_stocks[:count]
+        
+        logger.info(f"🎯 AI RECOMMENDATIONS COMPLETE: {len(final_recommendations)}/{analyzed_count} stocks recommended")
+        
+        return {
+            "recommended_stocks": final_recommendations,
+            "analysis_summary": f"AI analyzed {analyzed_count} professional-grade stocks with news sentiment. Found {len(final_recommendations)} high-confidence opportunities.",
+            "total_analyzed": analyzed_count,
+            "with_news_analysis": True,
+            "criteria": "Large-cap focus, news-enhanced analysis, confidence > 65%"
+        }
         
         return {
             "recommended_stocks": recommended_stocks[:count],

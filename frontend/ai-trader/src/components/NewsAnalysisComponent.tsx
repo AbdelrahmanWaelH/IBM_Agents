@@ -11,16 +11,20 @@ const NewsAnalysisComponent: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchSymbol, setSearchSymbol] = useState('');
   const [filter, setFilter] = useState<string>('all');
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    loadNewsAnalysis();
-  }, []);
+    if (!dataLoaded) {
+      loadNewsAnalysis();
+    }
+  }, [dataLoaded]);
 
   const loadNewsAnalysis = async (symbol?: string) => {
     try {
       setLoading(true);
       const data = await analyticsApi.getNewsAnalysis(symbol, 100);
       setNewsData(data);
+      setDataLoaded(true);
     } catch (error) {
       console.error('Error loading news analysis:', error);
     } finally {
@@ -29,6 +33,7 @@ const NewsAnalysisComponent: React.FC = () => {
   };
 
   const handleSearch = () => {
+    setDataLoaded(false); // Force reload for search
     loadNewsAnalysis(searchSymbol || undefined);
   };
 
