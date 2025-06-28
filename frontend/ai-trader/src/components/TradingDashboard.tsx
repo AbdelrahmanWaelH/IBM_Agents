@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Alert, AlertDescription } from './ui/alert';
+
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -14,7 +15,8 @@ import {
   Search,
   Bot,
   Settings,
-  MessageCircle
+  MessageCircle,
+  Loader2, // <-- add this to your lucide-react imports
 } from 'lucide-react';
 import { 
   portfolioApi, 
@@ -246,6 +248,9 @@ const TradingDashboard: React.FC<TradingDashboardProps> = ({ onShowOnboarding })
             <Button onClick={analyzeStock} disabled={loading || !searchSymbol.trim()}>
               <Search className="h-4 w-4 mr-2" />
               Analyze
+              {loading && (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              )}
             </Button>
           </div>
 

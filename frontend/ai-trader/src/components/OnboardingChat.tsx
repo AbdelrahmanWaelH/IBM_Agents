@@ -145,17 +145,19 @@ export const OnboardingChat: React.FC<OnboardingChatProps> = ({ onComplete }) =>
   };
 
   return (
-    <Card className="h-[600px] flex flex-col">
-      <CardHeader className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
-        <CardTitle className="flex items-center gap-2">
-          <MessageCircle className="w-5 h-5" />
-          Investment Preferences Setup
-        </CardTitle>
-      </CardHeader>
+    <Card className="h-[600px] flex flex-col p-0 shadow-lg">
+      <CardHeader
+  className="bg-gradient-to-r from-blue-800 to-purple-400 text-white p-4 rounded-t-2xl"
+>
+  <CardTitle className="flex items-center gap-2 text-lg font-semibold mb-6">
+    <MessageCircle className="w-8 h-8" />
+    Investment Preferences Setup
+  </CardTitle>
+</CardHeader>
       
-      <CardContent className="flex-1 flex flex-col p-4">
+      <CardContent className="flex-1 flex flex-col p-4 overflow-hidden">
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+        <div className="flex-1 overflow-y-auto mb-4 space-y-4 break-words">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -170,11 +172,12 @@ export const OnboardingChat: React.FC<OnboardingChatProps> = ({ onComplete }) =>
               )}
               
               <div
-                className={`max-w-[80%] p-3 rounded-lg ${
+                className={`max-w-[80%] p-3 rounded-lg break-words ${
                   message.role === 'user'
                     ? 'bg-blue-500 text-white ml-auto'
                     : 'bg-gray-100 text-gray-800'
                 }`}
+                style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
               >
                 <div className="text-sm">
                   {formatMessage(message.content)}

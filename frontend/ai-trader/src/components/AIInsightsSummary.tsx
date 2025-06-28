@@ -3,13 +3,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { analyticsApi, type TradingInsights, type PortfolioPerformance, type SentimentSummary } from '@/services/api';
-import { Brain, TrendingUp, TrendingDown, DollarSign, Activity, CheckCircle } from 'lucide-react';
+import { Brain, TrendingUp, TrendingDown, DollarSign, Activity, CheckCircle, Loader2, Info } from 'lucide-react';
 
 const AIInsightsSummary: React.FC = () => {
   const [insights, setInsights] = useState<TradingInsights | null>(null);
   const [performance, setPerformance] = useState<PortfolioPerformance | null>(null);
   const [sentiment, setSentiment] = useState<SentimentSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadSummaryData();
@@ -60,6 +61,33 @@ const AIInsightsSummary: React.FC = () => {
   const aiConfidence = getAIConfidenceLevel();
   const SentimentIcon = marketSentiment.icon;
 
+  const handleRefreshClick = async () => {
+    setRefreshing(true);
+    await loadSummaryData();
+    setTimeout(() => setRefreshing(false), 2000);
+  };
+
+  // Tooltip component
+  const InfoTooltip: React.FC<{ text: string }> = ({ text }) => (
+    <span className="relative group ml-1">
+      <Info className="h-4 w-4 text-gray-400 cursor-pointer" />
+      <span
+        className={`
+          absolute left-1/2 -translate-x-1/2 mt-2 z-20
+          opacity-0 group-hover:opacity-100
+          pointer-events-none group-hover:pointer-events-auto
+          bg-white text-gray-700 text-xs
+          rounded-xl shadow-lg px-3 py-2 whitespace-pre-line min-w-[180px] max-w-xs
+          transition-all duration-200
+          scale-95 group-hover:scale-100
+        `}
+        style={{ top: '100%' }}
+      >
+        {text}
+      </span>
+    </span>
+  );
+
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -76,7 +104,16 @@ const AIInsightsSummary: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Overlay for loading */}
+      {refreshing && (
+        <div
+          className="fixed top-0 left-0 w-screen h-screen z-50 flex items-center justify-center"
+          style={{ pointerEvents: 'all', background: 'rgba(0,0,0,0.1)' }}
+        >
+          <Loader2 className="h-16 w-16 text-gray-400 animate-spin" />
+        </div>
+      )}
       {/* AI Status Banner */}
       <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
         <CardHeader>
@@ -117,7 +154,12 @@ const AIInsightsSummary: React.FC = () => {
 
         <Card className={`border-${marketSentiment.color}-200`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Market Sentiment</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center">
+              Market Sentiment
+              <InfoTooltip text={
+                "Market Sentiment reflects the overall mood of the market based on recent news analysis. It indicates whether news is mostly positive (bullish), negative (bearish), or neutral."
+              } />
+            </CardTitle>
             <SentimentIcon className={`h-4 w-4 text-${marketSentiment.color}-500`} />
           </CardHeader>
           <CardContent>
@@ -132,7 +174,12 @@ const AIInsightsSummary: React.FC = () => {
 
         <Card className={`border-${aiConfidence.color}-200`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">AI Confidence</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center">
+              AI Confidence
+              <InfoTooltip text={
+                "AI Confidence shows how certain the AI is in its trading recommendations, averaged across all recent decisions. Higher confidence means the AI is more sure about its actions."
+              } />
+            </CardTitle>
             <Brain className={`h-4 w-4 text-${aiConfidence.color}-500`} />
           </CardHeader>
           <CardContent>
@@ -147,7 +194,12 @@ const AIInsightsSummary: React.FC = () => {
 
         <Card className="border-blue-200">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Trade Execution</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center">
+              Trade Execution
+              <InfoTooltip text={
+                "Trade Execution shows the percentage of AI recommendations that have been executed as trades. It helps you understand how often the AI's advice is acted upon."
+              } />
+            </CardTitle>
             <Activity className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
@@ -260,9 +312,13 @@ const AIInsightsSummary: React.FC = () => {
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={loadSummaryData}
+                onClick={handleRefreshClick}
                 className="w-full"
+                disabled={refreshing}
               >
+                {refreshing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin text-gray-400" />
+                ) : null}
                 Refresh Analysis
               </Button>
             </div>
