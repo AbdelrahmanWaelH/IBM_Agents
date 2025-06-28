@@ -387,7 +387,6 @@ Make informed decisions based on the data provided. Consider both opportunity an
                     # Additional debugging - show character codes around error
                     if e2.pos < len(fixed_json):
                         error_context = fixed_json[max(0, e2.pos-10):e2.pos+10]
-                        char_codes = [f"'{c}'({ord(c)})" for c in error_context]
                         logger.error(f"Character codes around error: {char_codes}")
                     
                     # Fallback: try to extract values manually using regex
@@ -681,7 +680,40 @@ Make informed decisions based on the data provided. Consider both opportunity an
             logger.error(f"Error marking decision as executed: {e}")
             self.db.rollback()
     
+    async def get_chat_completion(self, messages: List[Dict[str, str]]) -> str:
+        """Get chat completion for onboarding conversation."""
+        try:
+            if not self.llm:
+                return "I'm sorry, but I'm currently unable to chat. Please try again later."
+            
+            # Convert messages to a single prompt
+            conversation = ""
+            for msg in messages:
+                if msg["role"] == "system":
+                    conversation += f"System: {msg['content']}\n\n"
+                elif msg["role"] == "user":
+                    conversation += f"User: {msg['content']}\n\n"
+                elif msg["role"] == "assistant":
+                    conversation += f"Assistant: {msg['content']}\n\n"
+            
+            conversation += "Assistant:"
+            
+            # Get response from LLM
+            response = self.llm.invoke(conversation)
+            
+            if not response or not response.strip():
+                return "I'm sorry, I didn't quite understand that. Could you please rephrase your question?"
+            
+            return response.strip()
+            
+        except Exception as e:
+            logger.error(f"Error in chat completion: {e}")
+            return "I'm experiencing some technical difficulties. Please try again in a moment."
+
     def __del__(self):
         """Close database connection"""
         if hasattr(self, 'db'):
             self.db.close()
+
+# Alias for consistency with onboarding router
+AIService = AITradingService

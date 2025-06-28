@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://localhost:8001/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -483,4 +483,64 @@ export const automatedTradingApi = {
       throw error;
     }
   }
+};
+
+// Onboarding API
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  conversation_history: ChatMessage[];
+}
+
+export interface ChatResponse {
+  response: string;
+  is_complete: boolean;
+  preferences?: UserPreferences;
+}
+
+export interface UserPreferences {
+  risk_tolerance: 'conservative' | 'moderate' | 'aggressive';
+  investment_goals: string[];
+  time_horizon: 'short' | 'medium' | 'long';
+  sectors_of_interest: string[];
+  budget_range: 'small' | 'medium' | 'large';
+  experience_level: 'beginner' | 'intermediate' | 'advanced';
+  automated_trading_preference: 'none' | 'analysis_only' | 'full_control';
+}
+
+export const onboardingApi = {
+  chat: async (request: ChatRequest): Promise<ChatResponse> => {
+    try {
+      const response = await api.post('/onboarding/chat', request);
+      return response.data;
+    } catch (error) {
+      console.error('Error in onboarding chat:', error);
+      throw error;
+    }
+  },
+
+  savePreferences: async (preferences: UserPreferences): Promise<{ message: string }> => {
+    try {
+      const response = await api.post('/onboarding/save-preferences', preferences);
+      return response.data;
+    } catch (error) {
+      console.error('Error saving preferences:', error);
+      throw error;
+    }
+  },
+
+  getPreferences: async (): Promise<UserPreferences | null> => {
+    try {
+      const response = await api.get('/onboarding/preferences');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching preferences:', error);
+      throw error;
+    }
+  },
 };

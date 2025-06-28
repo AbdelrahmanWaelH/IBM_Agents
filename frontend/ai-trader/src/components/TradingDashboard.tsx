@@ -12,7 +12,9 @@ import {
   BarChart3,
   RefreshCw,
   Search,
-  Bot
+  Bot,
+  Settings,
+  MessageCircle
 } from 'lucide-react';
 import { 
   portfolioApi, 
@@ -33,7 +35,11 @@ import RealTimeStockChart from './RealTimeStockChart';
 import AIInsightsSummary from './AIInsightsSummary';
 import EnhancedTradingControl from './EnhancedTradingControl';
 
-const TradingDashboard: React.FC = () => {
+interface TradingDashboardProps {
+  onShowOnboarding?: () => void;
+}
+
+const TradingDashboard: React.FC<TradingDashboardProps> = ({ onShowOnboarding }) => {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -255,7 +261,7 @@ const TradingDashboard: React.FC = () => {
 
       {/* Main Dashboard Tabs */}
       <Tabs defaultValue="portfolio" className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
           <TabsTrigger value="news">Market News</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
@@ -263,6 +269,7 @@ const TradingDashboard: React.FC = () => {
           <TabsTrigger value="news-analysis">News Analysis</TabsTrigger>
           <TabsTrigger value="stock-charts">Stock Charts</TabsTrigger>
           <TabsTrigger value="automated-trading">Auto Trading</TabsTrigger>
+          <TabsTrigger value="preferences">Preferences</TabsTrigger>
         </TabsList>
 
         <TabsContent value="portfolio" className="space-y-4">
@@ -291,6 +298,38 @@ const TradingDashboard: React.FC = () => {
 
         <TabsContent value="automated-trading" className="space-y-4">
           <EnhancedTradingControl />
+        </TabsContent>
+
+        <TabsContent value="preferences" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Investment Preferences
+              </CardTitle>
+              <CardDescription>
+                Manage your investment preferences and onboarding settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-center py-8">
+                <MessageCircle className="w-16 h-16 text-blue-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Update Your Investment Profile</h3>
+                <p className="text-gray-600 mb-6 max-w-md mx-auto">
+                  Chat with our AI advisor to update your investment preferences, risk tolerance, 
+                  and trading goals to get better personalized recommendations.
+                </p>
+                <Button 
+                  onClick={onShowOnboarding}
+                  className="flex items-center gap-2"
+                  size="lg"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  Start Preferences Chat
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

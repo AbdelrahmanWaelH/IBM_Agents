@@ -114,6 +114,21 @@ class StockAnalysis(Base):
     ai_decision_id = Column(Integer, ForeignKey('ai_decisions.id'))
     analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, default=1)  # Simple single user for now
+    risk_tolerance = Column(String)  # "conservative", "moderate", "aggressive"
+    investment_goals = Column(Text)  # JSON string
+    time_horizon = Column(String)  # "short", "medium", "long"
+    sectors_of_interest = Column(Text)  # JSON string
+    budget_range = Column(String)  # "small", "medium", "large"
+    experience_level = Column(String)  # "beginner", "intermediate", "advanced"
+    automated_trading_preference = Column(String)  # "none", "analysis_only", "full_control"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
 def create_tables():
     """Create all database tables"""
     Base.metadata.create_all(bind=engine)
