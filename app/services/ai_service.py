@@ -681,34 +681,160 @@ Make informed decisions based on the data provided. Consider both opportunity an
             self.db.rollback()
     
     async def get_chat_completion(self, messages: List[Dict[str, str]]) -> str:
-        """Get chat completion for onboarding conversation."""
+        """Get chat completion for onboarding conversation with fallback support"""
         try:
+            # Check if LLM is available
             if not self.llm:
-                return "I'm sorry, but I'm currently unable to chat. Please try again later."
+                logger.warning("LLM not available, using fallback chat system")
+                return self._get_fallback_chat_response(messages)
             
-            # Convert messages to a single prompt
-            conversation = ""
+            # Convert messages to a more structured prompt to prevent conversation continuation
+            prompt_parts = []
+            
+            # Add system message
             for msg in messages:
                 if msg["role"] == "system":
-                    conversation += f"System: {msg['content']}\n\n"
-                elif msg["role"] == "user":
-                    conversation += f"User: {msg['content']}\n\n"
+                    prompt_parts.append(f"INSTRUCTIONS: {msg['content']}")
+                    break
+            
+            # Add conversation history in a structured way
+            conversation_history = []
+            current_user_message = ""
+            
+            for msg in messages:
+                if msg["role"] == "user":
+                    current_user_message = msg['content']
+                    conversation_history.append(f"User said: {msg['content']}")
                 elif msg["role"] == "assistant":
-                    conversation += f"Assistant: {msg['content']}\n\n"
+                    conversation_history.append(f"You responded: {msg['content']}")
             
-            conversation += "Assistant:"
+            if conversation_history:
+                prompt_parts.append("CONVERSATION SO FAR:")
+                prompt_parts.extend(conversation_history)
             
-            # Get response from LLM
-            response = self.llm.invoke(conversation)
+            prompt_parts.append(f"USER'S CURRENT MESSAGE: {current_user_message}")
+            prompt_parts.append("YOUR RESPONSE (respond only as the assistant, do not continue the conversation):")
             
-            if not response or not response.strip():
-                return "I'm sorry, I didn't quite understand that. Could you please rephrase your question?"
+            final_prompt = "\n\n".join(prompt_parts)
             
-            return response.strip()
+            # Try to get response from LLM with timeout
+            try:
+                logger.info("Attempting LLM chat completion...")
+                response = self.llm.invoke(final_prompt)
+                
+                if not response or not response.strip():
+                    logger.warning("LLM returned empty response, using fallback")
+                    return self._get_fallback_chat_response(messages)
+                
+                # Clean up the response to prevent conversation continuation
+                cleaned_response = self._clean_chat_response(response.strip())
+                
+                logger.info(f"LLM chat completion successful: {cleaned_response[:100]}...")
+                return cleaned_response
+                
+            except Exception as llm_error:
+                logger.error(f"LLM invocation failed: {llm_error}")
+                logger.warning("Falling back to rule-based chat system")
+                return self._get_fallback_chat_response(messages)
             
         except Exception as e:
             logger.error(f"Error in chat completion: {e}")
-            return "I'm experiencing some technical difficulties. Please try again in a moment."
+            return self._get_fallback_chat_response(messages)
+    
+    def _get_fallback_chat_response(self, messages: List[Dict[str, str]]) -> str:
+        """Fallback chat system when LLM is not available"""
+        try:
+            # Get the last user message
+            user_messages = [msg for msg in messages if msg.get("role") == "user"]
+            last_message = user_messages[-1]["content"].lower() if user_messages else ""
+            
+            # Count total questions asked
+            total_questions = len(user_messages)
+            
+            # Rule-based responses for onboarding
+            if total_questions == 0 or "hi" in last_message or "hello" in last_message:
+                return ("Hello! I'm your AI investment advisor. I'm here to help you set up your investment "
+                       "preferences so we can provide personalized recommendations. Let's start by getting to "
+                       "know your investment experience. Are you new to investing, or do you have some experience "
+                       "with stocks and trading?")
+            
+            elif total_questions == 1:
+                if any(word in last_message for word in ["new", "beginner", "first time", "never"]):
+                    return ("Great! It's exciting to start your investment journey. Since you're new to investing, "
+                           "let's take it step by step. First, let's talk about risk tolerance. How do you feel "
+                           "about market fluctuations? Would you prefer: 1) Conservative approach with lower risk "
+                           "and steady returns, 2) Moderate approach with balanced risk and growth potential, or "
+                           "3) Aggressive approach with higher risk for potentially higher returns?")
+                else:
+                    return ("Excellent! Having some investment experience will help us tailor better recommendations. "
+                           "Now let's discuss your risk tolerance. Given your experience, how comfortable are you "
+                           "with market volatility? Would you describe yourself as: 1) Conservative (prefer stability), "
+                           "2) Moderate (balanced approach), or 3) Aggressive (comfortable with higher risk)?")
+            
+            elif total_questions == 2:
+                return ("Thank you for sharing your risk tolerance! Now let's talk about your investment goals. "
+                       "What are you primarily looking to achieve with your investments? You can choose multiple: "
+                       "1) Growth (capital appreciation over time), 2) Income (regular dividends), "
+                       "3) Stability (preserve capital), or 4) Speculation (high-risk, high-reward opportunities)?")
+            
+            elif total_questions == 3:
+                return ("Perfect! Understanding your goals helps me recommend the right strategies. Now, what's your "
+                       "investment time horizon? Are you investing for: 1) Short-term goals (less than 1 year), "
+                       "2) Medium-term goals (1-5 years), or 3) Long-term goals (more than 5 years)?")
+            
+            elif total_questions == 4:
+                return ("Excellent! Time horizon is crucial for investment strategy. Now let's discuss sectors. "
+                       "Are there any particular industries or sectors you're interested in? For example: "
+                       "Technology, Healthcare, Finance, Energy, Consumer goods, Real estate, or would you "
+                       "prefer a diversified approach across multiple sectors?")
+            
+            elif total_questions == 5:
+                return ("Great choices! Now let's talk about your budget. What's your approximate investment "
+                       "budget range? 1) Small (under $10,000), 2) Medium ($10,000 - $100,000), or "
+                       "3) Large (over $100,000)? This helps me suggest appropriate position sizes.")
+            
+            elif total_questions == 6:
+                return ("Perfect! Finally, let's discuss automation. Would you like our AI to: "
+                       "1) Provide analysis only (you make all trading decisions), "
+                       "2) Provide analysis and execute trades with your approval, or "
+                       "3) Handle trading automatically based on AI recommendations?")
+            
+            elif total_questions >= 7:
+                return ("Thank you for providing all that information! Based on our conversation, I've gathered "
+                       "your investment preferences. I'll now create your personalized investment profile to "
+                       "provide you with tailored recommendations. You can always update these preferences later. "
+                       "ONBOARDING_COMPLETE")
+            
+            else:
+                return ("I understand. Could you tell me more about your investment preferences? "
+                       "This will help me provide better recommendations for you.")
+                
+        except Exception as e:
+            logger.error(f"Error in fallback chat: {e}")
+            return ("Thank you for your input! Let's continue with your investment preferences setup. "
+                   "What aspects of investing are most important to you?")
+
+    def _clean_chat_response(self, response: str) -> str:
+        """Clean the chat response to prevent conversation continuation"""
+        # Split by common conversation markers and take only the first part
+        stop_patterns = [
+            "\n\nUser:",
+            "\nUser:",
+            "\n\nAssistant:",
+            "\nAssistant:",
+            "User said:",
+            "User:"
+        ]
+        
+        cleaned = response
+        for pattern in stop_patterns:
+            if pattern in cleaned:
+                cleaned = cleaned.split(pattern)[0]
+        
+        # Remove any trailing colons or conversation markers
+        cleaned = cleaned.rstrip(": \n")
+        
+        return cleaned.strip()
 
     def __del__(self):
         """Close database connection"""

@@ -21,9 +21,14 @@ app = FastAPI(title="AI Trading Agent", version="1.0.0")
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://127.0.0.1:5173",  # Alternative localhost
+        "http://localhost:3000",  # Alternative dev server
+        "http://127.0.0.1:3000",  # Alternative dev server
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

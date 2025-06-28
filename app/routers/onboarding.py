@@ -42,17 +42,28 @@ You are an AI financial advisor helping new users set up their investment prefer
 6. Experience level (beginner, intermediate, advanced)
 7. Automated trading preference (none, analysis only, full control)
 
-Ask questions one at a time to make the conversation natural and engaging. Be friendly, professional, and educational. When you have gathered all the information, respond with "ONBOARDING_COMPLETE" at the end of your message and provide a summary of their preferences.
+IMPORTANT INSTRUCTIONS:
+- Ask questions one at a time to make the conversation natural and engaging
+- Be friendly, professional, and educational
+- Use simple and concise English without technical jargon
+- Only respond as the Assistant, do not simulate user responses
+- Do not continue conversations or role-play multiple turns
+- Give ONE response to the user's question/statement
+- When you have gathered all 7 pieces of information, respond with "ONBOARDING_COMPLETE" at the end
 
-Start by greeting the user and asking about their investment experience level. Use simple and concise English without relying on technical jargon unexplained.
+If this is the first interaction, start by greeting the user and asking about their investment experience level.
 """
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_onboarding_agent(
     request: ChatRequest,
-    ai_service: AIService = Depends(lambda: AIService())
+    db: Session = Depends(get_db)
 ):
+    ai_service = None
     try:
+        # Initialize AI service
+        ai_service = AIService()
+        
         # Build conversation context
         messages = [{"role": "system", "content": ONBOARDING_SYSTEM_PROMPT}]
         
@@ -82,7 +93,16 @@ async def chat_with_onboarding_agent(
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error in onboarding chat: {str(e)}")
+        error_msg = f"Error in onboarding chat: {str(e)}"
+        print(f"Chat error details: {error_msg}")  # Debug logging
+        raise HTTPException(status_code=500, detail=error_msg)
+    finally:
+        # Clean up AI service if needed
+        if ai_service and hasattr(ai_service, 'db'):
+            try:
+                ai_service.db.close()
+            except:
+                pass
 
 @router.post("/save-preferences")
 async def save_user_preferences(
