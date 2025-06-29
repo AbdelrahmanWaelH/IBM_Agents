@@ -157,7 +157,10 @@ const SymbolManager: React.FC = () => {
     try {
       const data = await automatedTradingApi.getAIRecommendations(8);
       setAiRecommendations(data.recommended_stocks);
-      setSuccess(`✅ ${data.analysis_summary || `AI analyzed stocks and found ${data.recommended_stocks.length} high-confidence opportunities`}`);
+      setSuccess(`✅ ${data.analysis_summary || `AI analyzed ${data.total_analyzed} stocks and found ${data.recommended_stocks.length} high-quality opportunities`}${data.excluded_existing ? ` (excluded ${data.excluded_existing} existing symbols)` : ''}`);
+      if (data.excluded_existing > 0) {
+        setSuccess(prev => prev + ` • Available pool: ${data.available_pool} stocks`);
+      }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Error getting AI recommendations';
       setError(`❌ ${errorMessage}. Please ensure the backend is running and try again.`);
@@ -354,7 +357,7 @@ const SymbolManager: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-semibold">Professional AI Stock Recommendations</h4>
-                  <p className="text-sm text-gray-600">AI analyzes stocks with news sentiment like professional trading systems</p>
+                  <p className="text-sm text-gray-600">AI analyzes 80+ high-quality stocks using technical indicators (excludes your existing symbols)</p>
                 </div>
                 <Button 
                   onClick={getAIRecommendations}
