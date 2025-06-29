@@ -91,9 +91,9 @@ class StockService:
                 hist = ticker.history(period="5d", interval="1d")
                 
                 if hist.empty:
-                    logger.error(f"No historical data available for {symbol}")
+                    logger.warning(f"No historical data available for {symbol} - possibly delisted or invalid")
                     if attempt == max_retries - 1:
-                        raise StockDataException(f"No market data found for symbol {symbol}")
+                        return None  # Return None instead of raising exception
                     continue
                 
                 # Get current price from most recent data
@@ -121,7 +121,8 @@ class StockService:
                 
                 # Validate price data
                 if current_price <= 0:
-                    raise StockDataException(f"Invalid price data for {symbol}: {current_price}")
+                    logger.warning(f"Invalid price data for {symbol}: {current_price}")
+                    return None
                 
                 stock_info = StockInfo(
                     symbol=symbol,
@@ -150,8 +151,8 @@ class StockService:
                     logger.warning(f"Rate limited by Yahoo Finance. Waiting {wait_time}s before retry...")
                     await asyncio.sleep(wait_time)
                     continue
-                elif 'Invalid symbol' in error_msg or 'not found' in error_msg.lower():
-                    logger.error(f"Symbol {symbol} not found in Yahoo Finance")
+                elif 'Invalid symbol' in error_msg or 'not found' in error_msg.lower() or 'delisted' in error_msg.lower():
+                    logger.info(f"Symbol {symbol} not found or delisted")
                     return None
                 else:
                     # For other errors, wait briefly before retry

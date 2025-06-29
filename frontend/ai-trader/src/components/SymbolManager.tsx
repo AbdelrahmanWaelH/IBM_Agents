@@ -32,7 +32,10 @@ interface AIRecommendation {
   change_percent: number;
   market_cap?: number;
   volume?: number;
-  news_articles_analyzed?: number;
+  technical_score?: number;
+  ma_5?: number;
+  ma_20?: number;
+  volume_ratio?: number;
 }
 
 const SymbolManager: React.FC = () => {
@@ -416,9 +419,9 @@ const SymbolManager: React.FC = () => {
                                 {symbols.includes(rec.symbol) && (
                                   <Badge variant="default" className="text-xs">Already Added</Badge>
                                 )}
-                                {(rec.news_articles_analyzed ?? 0) > 0 && (
-                                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
-                                    📰 {rec.news_articles_analyzed} news
+                                {rec.technical_score && rec.technical_score > 0.7 && (
+                                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
+                                    � Score: {rec.technical_score}
                                   </Badge>
                                 )}
                               </div>
@@ -433,6 +436,15 @@ const SymbolManager: React.FC = () => {
                                   </span>
                                 )}
                               </div>
+                              {/* Technical Analysis Details */}
+                              {rec.ma_5 && rec.ma_20 && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  MA5: ${rec.ma_5.toFixed(2)} | MA20: ${rec.ma_20.toFixed(2)}
+                                  {rec.volume_ratio && rec.volume_ratio > 1.2 && (
+                                    <span className="text-blue-600 ml-2">• High Volume</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <Badge variant="outline" className={

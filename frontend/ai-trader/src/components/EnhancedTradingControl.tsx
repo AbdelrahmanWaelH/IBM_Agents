@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import SymbolManager from './SymbolManager';
 import { automatedTradingApi, portfolioApi, type Portfolio } from '../services/api';
-import { useTradingWebSocket } from '../hooks/useWebSocket';
+import { useEventDrivenData } from '../hooks/useEventDrivenData';
 import { 
   Bot, 
   Play, 
@@ -80,17 +80,30 @@ const EnhancedTradingControl: React.FC = () => {
   const [confidenceThreshold, setConfidenceThreshold] = useState([75]);
   const [newUpdatesCount, setNewUpdatesCount] = useState(0);
 
-  // WebSocket integration for real-time updates
+  // Event-driven data fetching for real-time updates
   const {
-    isConnected: wsConnected,
-    connectionState,
-    aiDecisions,
-    tradeExecutions,
-    engineStatus: wsEngineStatus,
-    portfolioUpdates
-  } = useTradingWebSocket();
+    data: eventData,
+    error: dataError,
+    refreshAfterAction,
+    refreshData
+  } = useEventDrivenData();
 
-  // Update local state when websocket data arrives
+  // Extract data from event-driven response
+  const aiDecisions = eventData.aiDecisions;
+  const tradeExecutions = eventData.tradeExecutions;
+  const wsEngineStatus = eventData.engineStatus;
+  const portfolioUpdates = eventData.portfolioUpdate;
+  
+  // Connection status based on data fetching
+  const wsConnected = !dataError;
+  const connectionState = dataError ? 'error' : 'connected';
+
+  // Initial data fetch on component mount
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  // Update local state when event data arrives
   useEffect(() => {
     if (wsEngineStatus) {
       // Map websocket engine status to local engine status format
@@ -232,13 +245,7 @@ const EnhancedTradingControl: React.FC = () => {
 
   useEffect(() => {
     loadAllData();
-    
-    // Refresh data every 30 seconds
-    const interval = setInterval(() => {
-      loadAllData();
-    }, 30000);
-    
-    return () => clearInterval(interval);
+    // No more automatic refreshing - only event-driven updates
   }, [loadAllData]);
 
   const startEngine = async () => {
@@ -248,6 +255,7 @@ const EnhancedTradingControl: React.FC = () => {
     try {
       await automatedTradingApi.start();
       await loadEngineStatus();
+      await refreshAfterAction('Engine started');
       setSuccess('Trading engine started successfully');
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'Failed to start engine');
@@ -263,6 +271,7 @@ const EnhancedTradingControl: React.FC = () => {
     try {
       await automatedTradingApi.stop();
       await loadEngineStatus();
+      await refreshAfterAction('Engine stopped');
       setSuccess('Trading engine stopped successfully');
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'Failed to stop engine');
@@ -278,6 +287,7 @@ const EnhancedTradingControl: React.FC = () => {
     try {
       const response = await automatedTradingApi.setMode(mode);
       await loadModeInfo();
+      await refreshAfterAction(`Trading mode set to ${mode}`);
       setSuccess(response.message);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'Failed to set trading mode');
@@ -290,6 +300,7 @@ const EnhancedTradingControl: React.FC = () => {
     try {
       await automatedTradingApi.updateConfidenceThreshold(threshold / 100);
       await loadEngineStatus();
+      await refreshAfterAction(`Confidence threshold updated to ${threshold}%`);
       setSuccess(`Confidence threshold updated to ${threshold}%`);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'Failed to update confidence threshold');

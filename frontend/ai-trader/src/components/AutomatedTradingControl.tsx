@@ -57,14 +57,7 @@ const AutomatedTradingControl: React.FC = () => {
   useEffect(() => {
     loadEngineStatus();
     loadRecentActivity();
-    
-    // Refresh status every 30 seconds
-    const interval = setInterval(() => {
-      loadEngineStatus();
-      loadRecentActivity();
-    }, 30000);
-    
-    return () => clearInterval(interval);
+    // No more automatic refreshing - only event-driven updates
   }, []);
 
   const loadEngineStatus = async () => {

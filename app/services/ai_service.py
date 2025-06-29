@@ -441,21 +441,42 @@ Make informed decisions based on the data provided. Consider both opportunity an
                     # Additional debugging - show character codes around error
                     if e2.pos < len(fixed_json):
                         error_context = fixed_json[max(0, e2.pos-10):e2.pos+10]
+                        char_codes = [ord(c) for c in error_context]
                         logger.error(f"Character codes around error: {char_codes}")
                     
                     # Fallback: try to extract values manually using regex
                     logger.warning("🚨 Attempting manual value extraction as fallback")
                     data = self._extract_values_manually(cleaned_response)
             
-            # Validate and extract data with defaults
+            # Validate and extract data with robust defaults
             action_str = data.get('action', 'hold').lower().strip()
             if action_str not in ['buy', 'sell', 'hold']:
                 logger.warning(f"Invalid action '{action_str}', defaulting to 'hold'")
                 action_str = 'hold'
             
             action = TradeAction(action_str)
-            confidence = max(0.0, min(1.0, float(data.get('confidence', 0.5))))
-            quantity_percentage = max(1.0, min(50.0, float(data.get('quantity_percentage', 5))))
+            
+            # Safe float conversion with robust defaults
+            confidence_raw = data.get('confidence', 0.5)
+            try:
+                if confidence_raw is None or confidence_raw == '' or confidence_raw == 'None':
+                    confidence = 0.5
+                else:
+                    confidence = max(0.0, min(1.0, float(str(confidence_raw).strip())))
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid confidence value: {confidence_raw}, using default 0.5")
+                confidence = 0.5
+                
+            quantity_raw = data.get('quantity_percentage', 5)
+            try:
+                if quantity_raw is None or quantity_raw == '' or quantity_raw == 'None':
+                    quantity_percentage = 5.0
+                else:
+                    quantity_percentage = max(1.0, min(50.0, float(str(quantity_raw).strip())))
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid quantity_percentage value: {quantity_raw}, using default 5.0")
+                quantity_percentage = 5.0
+                
             reasoning = str(data.get('reasoning', 'AI analysis completed'))  # Remove length limit
             
             logger.info(f"🎯 AI Decision for {stock_info.symbol}: {action.value.upper()} (confidence: {confidence:.1%}, quantity: {quantity_percentage}%)")
@@ -596,10 +617,13 @@ Make informed decisions based on the data provided. Consider both opportunity an
                 confidence_match = re.search(pattern, response, re.IGNORECASE)
                 if confidence_match:
                     try:
-                        confidence = float(confidence_match.group(1))
-                        data['confidence'] = max(0.0, min(1.0, confidence))
-                        break
-                    except ValueError:
+                        confidence_str = confidence_match.group(1).strip()
+                        if confidence_str and confidence_str != 'None' and confidence_str != '':
+                            confidence = float(confidence_str)
+                            data['confidence'] = max(0.0, min(1.0, confidence))
+                            break
+                    except (ValueError, TypeError):
+                        logger.warning(f"Failed to parse confidence from: {confidence_match.group(1)}")
                         continue
             
             # Try to extract quantity_percentage (handle both string and numeric formats)
@@ -613,10 +637,13 @@ Make informed decisions based on the data provided. Consider both opportunity an
                 quantity_match = re.search(pattern, response, re.IGNORECASE)
                 if quantity_match:
                     try:
-                        quantity = float(quantity_match.group(1))
-                        data['quantity_percentage'] = max(1.0, min(50.0, quantity))
-                        break
-                    except ValueError:
+                        quantity_str = quantity_match.group(1).strip()
+                        if quantity_str and quantity_str != 'None' and quantity_str != '':
+                            quantity = float(quantity_str)
+                            data['quantity_percentage'] = max(1.0, min(50.0, quantity))
+                            break
+                    except (ValueError, TypeError):
+                        logger.warning(f"Failed to parse quantity from: {quantity_match.group(1)}")
                         continue
             
             # Try to extract reasoning (handle multiline strings)

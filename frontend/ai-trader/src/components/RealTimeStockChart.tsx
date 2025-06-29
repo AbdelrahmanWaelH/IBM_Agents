@@ -30,14 +30,12 @@ const RealTimeStockChart: React.FC = () => {
   const [symbol, setSymbol] = useState('');
   const [stockInfo, setStockInfo] = useState<StockInfo | null>(null);
   const [chartData, setChartData] = useState<ChartData[]>([]);
-  const [priceData, setPriceData] = useState<PriceData[]>([]);
   const [loading, setLoading] = useState(false);
   const [isRealTime, setIsRealTime] = useState(false);
   const [interval, setInterval] = useState('1m');
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   
-  const intervalRef = useRef<number | null>(null);
   const lastUpdateRef = useRef<number>(0);
 
   const generateChartData = (basePrice: number, interval: string, points: number) => {
@@ -107,10 +105,9 @@ const RealTimeStockChart: React.FC = () => {
       
       // Generate chart data based on interval
       const points = interval === '1w' ? 52 : interval === '1d' ? 30 : 50;
-      const { data: chartData, prices } = generateChartData(data.current_price, interval, points);
+      const { data: chartData } = generateChartData(data.current_price, interval, points);
       
       setChartData(chartData);
-      setPriceData(prices);
       setHasLoaded(true);
       lastUpdateRef.current = Date.now();
       
@@ -122,91 +119,25 @@ const RealTimeStockChart: React.FC = () => {
     }
   }, [symbol, interval]);
 
-  const updateRealTimeData = useCallback(async () => {
-    if (!stockInfo || !isRealTime) return;
-    
-    const now = Date.now();
-    
-    // Only update if enough time has passed (based on interval)
-    const minInterval = interval === '1m' ? 30000 : interval === '5m' ? 60000 : 180000; // Slower updates
-    if (now - lastUpdateRef.current < minInterval) return;
-    
-    try {
-      // Don't make API call for real-time updates, just simulate price movement
-      // const data = await tradingApi.getStock(symbol);
-      
-      // Add new data point with more stable price movement
-      const lastPrice = priceData[priceData.length - 1]?.price || stockInfo.current_price;
-      
-      // More gradual price changes for real-time updates
-      const maxChange = 0.002; // Max 0.2% change per update
-      const priceChange = (Math.random() - 0.5) * maxChange * lastPrice;
-      const newPrice = Math.max(0.01, lastPrice + priceChange); // Ensure positive price
-      
-      const volatility = 0.001 * newPrice; // 0.1% volatility for real-time
-      const open = lastPrice;
-      const close = newPrice;
-      const high = Math.max(open, close) + Math.random() * volatility;
-      const low = Math.min(open, close) - Math.random() * volatility;
-      
-      const newChartPoint: ChartData = {
-        x: now,
-        y: [open, high, low, close]
-      };
-      
-      const newPricePoint: PriceData = {
-        timestamp: now,
-        price: close,
-        volume: Math.floor(Math.random() * 200000 + 300000) // 300K to 500K volume
-      };
-      
-      setChartData(prev => [...prev.slice(-49), newChartPoint]); // Keep more points
-      setPriceData(prev => [...prev.slice(-49), newPricePoint]);
-      lastUpdateRef.current = now;
-      
-    } catch (err) {
-      console.error('Error updating real-time data:', err);
-    }
-  }, [stockInfo, interval, priceData, isRealTime]);
-
-  const stopRealTimeUpdates = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  const startRealTimeUpdates = useCallback(() => {
-    stopRealTimeUpdates();
-    // Much longer intervals to prevent spam
-    const updateInterval = interval === '1m' ? 30000 : interval === '5m' ? 60000 : 120000; // 30s, 1m, 2m
-    intervalRef.current = window.setInterval(updateRealTimeData, updateInterval);
-  }, [interval, updateRealTimeData, stopRealTimeUpdates]);
-
   const toggleRealTime = () => {
     setIsRealTime(!isRealTime);
+    if (!isRealTime) {
+      // When enabling real-time, refresh data once
+      loadStockData();
+    }
   };
 
+  // Remove all polling - only refresh on user interaction
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
+    // No cleanup needed since we removed polling
   }, []);
 
+  // Event-driven loading only
   useEffect(() => {
-    if (isRealTime && hasLoaded) {
-      startRealTimeUpdates();
-    } else {
-      stopRealTimeUpdates();
+    if (symbol && !hasLoaded) {
+      loadStockData();
     }
-    
-    return () => stopRealTimeUpdates();
-  }, [isRealTime, hasLoaded, startRealTimeUpdates, stopRealTimeUpdates]);
-
-  // Only reload data when interval changes if user explicitly requests it
-  // Remove the automatic reload to prevent spam
+  }, [symbol, loadStockData, hasLoaded]);
 
   const chartOptions = {
     chart: {

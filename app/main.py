@@ -7,6 +7,7 @@ import os
 load_dotenv()
 
 import json
+import asyncio
 from datetime import datetime
 
 # Initialize database
@@ -51,10 +52,10 @@ app.include_router(automated_trading.router, prefix="/api/automated-trading", ta
 app.include_router(company_search.router, prefix="/api/companies", tags=["company-search"])
 app.include_router(onboarding.router, prefix="/api/onboarding", tags=["onboarding"])
 
-# WebSocket endpoints
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Main WebSocket endpoint for real-time updates"""
+    connection_id = None
     try:
         connection_id = await manager.connect(websocket, client_id)
         print(f"✅ WebSocket client connected: {connection_id}")
@@ -97,11 +98,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 
     except WebSocketDisconnect:
         print(f"🔌 WebSocket client disconnected: {client_id}")
-        manager.disconnect(connection_id)
+        if connection_id:
+            manager.disconnect(connection_id)
     except Exception as e:
         print(f"❌ WebSocket error for client {client_id}: {e}")
         import traceback
         traceback.print_exc()
+        if connection_id:
+            manager.disconnect(connection_id)
         try:
             await websocket.close(code=1000)
         except:
